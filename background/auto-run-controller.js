@@ -14,7 +14,6 @@
       cancelPendingCommands,
       clearStopRequest,
       createAutoRunSessionId,
-      ensureHotmailMailboxReadyForAutoRunRound,
       getAutoRunStatusPayload,
       getErrorMessage,
       getFirstUnfinishedNodeId,
@@ -530,6 +529,12 @@
               vpsUrl: prevState.vpsUrl,
               vpsPassword: prevState.vpsPassword,
               customPassword: prevState.customPassword,
+              existingAccountJson: prevState.existingAccountJson,
+              existingAccount: prevState.existingAccount,
+              email: prevState.email,
+              password: prevState.password,
+              accountIdentifierType: prevState.accountIdentifierType,
+              accountIdentifier: prevState.accountIdentifier,
               plusModeEnabled: prevState.plusModeEnabled,
               plusPaymentMethod: prevState.plusPaymentMethod,
               plusAccountAccessStrategy: prevState.plusAccountAccessStrategy,
@@ -611,15 +616,6 @@
               attemptRun,
               sessionId,
             });
-
-            if (!useExistingProgress && startNodeId === defaultStartNodeId && typeof ensureHotmailMailboxReadyForAutoRunRound === 'function') {
-              await ensureHotmailMailboxReadyForAutoRunRound({
-                targetRun,
-                totalRuns,
-                attemptRun,
-                sessionId,
-              });
-            }
 
             await runAutoSequenceFromWorkflowNode(startNodeId, {
               targetRun,

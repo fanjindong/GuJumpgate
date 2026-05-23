@@ -1,70 +1,67 @@
 # GuJumpgate
 
-一个也许能“真正解放双手”的全自动 GPT Plus 注册浏览器扩展。
+GuJumpgate 是一个 Chrome 扩展，用于把“已有 ChatGPT 账号登录、Plus 订阅、支付页处理、成功状态确认”串成可恢复的自动化流程。
 
-如果这个项目能帮上你，欢迎点个 Star⭐~
+当前项目只有 **已有账户 Plus 新流程**。旧的自动注册 Free 账号流程、手机号注册流程、多注册迁移设计和独立贡献流程已经不再作为当前功能维护。
 
 > [!IMPORTANT]
-> 目前 OAuth 风控严重，基本必跳手机绑定，所以只推荐走生成无 RT 的 JSON。
->
-> 在扩展内的账号接入策略中，请务必选择：`导出至 - SESSION JSON 导入`。
+> 侧边栏中的 `Plus 模式` 已固定开启。启动前必须填写 `账户 JSON`，流程会使用该账号登录并继续 Plus 订阅链路。
 
-## 已实现能力
+## 当前能力
 
-1. **自动注册 Free 账号**
+1. **已有账户登录**
 
-   借助 FlowPilot 项目实现 Free 账号的自动注册。
+   读取 `账户 JSON` 中的邮箱、密码和验证码接口，自动打开 ChatGPT / OpenAI 认证页并登录已有账号。
 
-2. **PayPal 激活 Plus 全流程**
+2. **登录验证码自动获取**
 
-   - 自动跳转 Stripe 长链接
-   - 自动填写 Stripe 账单并跳转 PayPal
-   - 自动填写 PayPal 账单并完成流程
+   `mailbox_url` 用于拉取登录验证码。接口返回中只要能解析到 `code`、`data.code` 或 `result.code` 即可。
 
-3. **Hotmail / Outlook 自动别名功能**
+3. **Plus Checkout 创建**
 
-4. **PayPal 号码池管理**
+   支持云端支付转换服务生成 Checkout 链接；关闭云端转换后，可回退到本地页面创建 Checkout。
 
-5. **自动 OAuth 回调到本地及各面板**
+4. **支付方式**
 
-   对 FlowPilot 原有回调流程做了调整和适配。
+   - `PayPal`：默认走 Hosted Checkout 分段流程，支持验证码接口、号码池、弹窗延迟和成功后等待。
+   - `GoPay`：支持手机号、OTP 和 PIN 配置。
+   - `GPC`：支持 API 地址、API Key、自动/手动手机号模式、OTP 渠道、本地短信 helper 与 PIN。
 
-6. **支持跳过 OAuth**
+5. **运行记录与恢复**
 
-   忽略 RT，生成只有 AT 的 JSON 文件到本地。
+   自动运行绑定会话标识；停止后旧倒计时和旧重试不会重新拉起流程。侧边栏保留日志、步骤状态、账号记录和更新提示。
 
-## 前提要求
+6. **辅助能力**
 
-1. 1 个带 API、且能连续正常接收 PayPal 验证码的 US `+1` 接码手机号
-2. 1 个或 N 个支持 `IMAP` 和 `Graph` 的 Outlook 邮箱，或者自建 Cloudflare Temp Email / Cloud Mail
-3. 1 个相对干净、支持 PayPal 注册的 US 代理
+   仍保留 IP 代理、账号记录本地同步、iCloud / 2925 / Hotmail 等辅助模块，主要服务历史配置兼容、验证码读取或本地工具能力；它们不是当前主流程入口。
 
-> [!NOTE]
-> 自建 Cloudflare Temp Email / Cloud Mail 需要使用 `edu` 前缀，例如 `edu.openai.com`，才有试用资格。
->
-> PayPal 注册代理越干净，越不容易触发 PayPal 注册滑块。账单页面的 Captcha 扩展已经实现了自动屏蔽。
+## 账户 JSON
 
-## 测试环境
+侧边栏第一项是 `账户 JSON`，格式如下：
 
-- 成功率：连续 10 次串行运行，注册并激活 Plus 100% 成功率
-- 浏览器：Chrome `148.0.7778.168`（64 位正式版），开启无痕模式
-- 网络环境： US 自建代理 + 云端转换
+```json
+{
+  "email": "name@example.com",
+  "password": "your-password",
+  "mailbox_url": "https://example.com/latest-code"
+}
+```
 
-过程中遇到任何卡死的问题，都可以先停止，然后点击流程的各个节点进行重试，也可以点击旁边选择跳过。
+字段说明：
+
+- `email`：已有 ChatGPT 账号邮箱。
+- `password`：已有账号密码。
+- `mailbox_url`：验证码接口地址，必须是 `http` 或 `https`。
 
 ## 安装与使用
 
-先到本仓库的 [Releases](https://github.com/FoundZiGu/GuJumpgate/releases) 页面下载扩展压缩包并解压。
+### 1. 下载扩展
 
-### 1. 打开扩展开发者模式
+到本仓库的 [Releases](https://github.com/FoundZiGu/GuJumpgate/releases) 页面下载扩展压缩包并解压。
 
-打开 `chrome://extensions/`，开启开发者模式。
+### 2. 加载扩展
 
-![打开 Chrome 扩展开发者模式](docs/images/github-readme-1779190547983.webp)
-
-### 2. 加载扩展目录
-
-选择“加载已解压的扩展程序”，然后选择刚才解压出的文件夹。
+打开 `chrome://extensions/`，开启开发者模式，选择“加载已解压的扩展程序”，然后选择解压出的扩展目录。
 
 ![加载未打包的扩展程序](docs/images/readme-load-extension.webp)
 
@@ -74,94 +71,52 @@
 
 ![启用扩展的无痕模式权限](docs/images/readme-incognito-permission.webp)
 
-### 4. 配置代理
+### 4. 配置账户与支付
 
-现在推荐且能走的路径是 **US注册** + **JP拿长链接** + **US付款**
-这条路径还是可以稳定出试用和正常激活PLUS的
+打开侧边栏，填写 `账户 JSON`，选择 `Plus 支付` 方式，并按所选支付方式补齐配置。
 
-#### 方案一：使用云端转换 （推荐）
+PayPal 默认推荐开启 `云端支付转换`。如需本地转换，关闭云端转换后再填写本地支付转换代理。
 
-直接开启代理工具的规则/全局 US代理，选择云端转换，即可开始使用
+### 5. 启动本地 helper
 
-#### 方案二：本地配置代理
-
-配置本地用于支付转换的代理，出口必须是 JP 代理。
-
-![配置支付转换代理](docs/images/readme-payment-proxy.webp)
-
-然后代理工具开启全局 US，或者配置好相应规则分流至 US。
-
-### 5. 启动 Hotmail Helper
-
-请注意：本地 JSON 生成导出依赖本地助手。无论你是否使用 Hotmail / Outlook 邮箱，都请启动。
-
-运行解压目录内的脚本：
+如需账号记录快照同步或本地辅助接口，请启动解压目录中的脚本：
 
 - Windows：`start-hotmail-helper.bat`
 - macOS：`start-hotmail-helper.command`
 
-![运行 start-hotmail-helper 脚本](docs/images/github-readme-1779193024860.webp)
+### 6. 开始运行
 
-### 6. 配置扩展参数
+确认配置保存后，设置运行次数并点击 `自动`。流程会按当前支付方式显示对应步骤，并在日志区输出结构化状态。
 
-在扩展中打开侧边栏，按你的环境配置参数。
+## 当前步骤
 
-#### 选择最终 JSON 导出到的平台
+PayPal Hosted Checkout 默认步骤：
 
-账号接入策略建议选择：`导出至 - SESSION JSON 导入`。
+1. 打开 ChatGPT 官网
+2. 登录已有账户
+3. 获取登录验证码
+4. 创建 Plus Checkout
+5. 填写 Hosted Checkout
+6. 处理 PayPal Hosted 支付
+7. Plus 开通成功
 
-![选择最终 JSON 导出平台](docs/images/readme-export-target.webp)
+GoPay / GPC 会把支付中段替换为对应订阅确认或任务等待步骤，但入口仍是已有账户 Plus 流程。
 
-> [!WARNING]
-> OAuth 目前严重风控，要求绑定手机号，仅推荐使用 `导出至 - SESSION JSON 导入`。
+## 文档
 
-#### JSON 类型说明
+- [项目完整链路说明.md](项目完整链路说明.md)：面向开发者的当前主流程说明。
+- [项目文件结构说明.md](项目文件结构说明.md)：当前仓库模块和文件职责索引。
+- [docs/使用教程/使用教程.md](docs/使用教程/使用教程.md)：拆分后的中文教程索引。
+- [services/checkout-converter/README.md](services/checkout-converter/README.md)：云端支付转换服务说明。
 
-- `OAuth`：导出的 JSON 有刷新令牌，反代工具能持续使用
-- `SESSION`：导出的 JSON 无刷新令牌，仅支持部分反代工具使用，例如 CPA / SUB2API；导出有效期大约 10 天，过期后需要重新获取
-
-![选择账号接入策略](docs/images/readme-account-access-strategy.webp)
-
-#### 验证码接口
-
-填写可直接 `GET` 请求的 `http` / `https` 地址。
-
-![填写验证码接口](docs/images/readme-verification-url.webp)
-
-#### PAYPAL 接码电话
-
-填写 PayPal 接码电话，注意按扩展提示填写格式。
-
-![填写 PAYPAL 接码电话](docs/images/readme-paypal-phone.webp)
-
-#### 邮箱渠道
-
-选择对应的邮箱渠道。自建邮箱需使用 `edu` 前缀获得试用资格。
-
-![选择邮箱渠道](docs/images/readme-mail-provider.webp)
-
-然后填写或导入各自邮箱渠道所需的配置。
-
-### 7. 开始运行
-
-保存配置后即可开始运行。
-
-![开始运行扩展流程](docs/images/github-readme-1779194981001.webp)
-
-## 版权与来源说明
+## 来源说明
 
 本项目基于开源项目 [QLHazyCoder/FlowPilot](https://github.com/QLHazyCoder/FlowPilot) 进行修改、移植与二次开发，其部分早期代码与 [whwh1233/StepFlow-Duck](https://github.com/whwh1233/StepFlow-Duck) 具有共同历史。
 
 原项目及其相关开源部分采用 MIT License 发布。根据 MIT License，你可以在保留原版权声明和许可声明的前提下使用、修改、分发本项目的相关代码。
 
-为避免歧义，原项目作者、历史贡献者与当前二开版本之间不存在默认的认可、担保或背书关系。本项目中新增的适配、流程调整、脚本移植与文档整理内容，除另有说明外，均由当前维护者负责。
-
-如果你分发本项目或其修改版本，请一并保留仓库中的 `LICENSE` 及相关来源说明文件。
+当前维护版本的新增适配、流程调整、脚本移植与文档整理内容，除另有说明外，均由当前维护者负责。
 
 ## 使用提示
 
-- 使用者应自行遵守目标平台服务条款、适用法律及其所在地区的监管要求
-
-## 友情链接
-
-- [LINUX DO - 新的理想型社区](https://linux.do/)
+使用者应自行遵守目标平台服务条款、适用法律及其所在地区监管要求。

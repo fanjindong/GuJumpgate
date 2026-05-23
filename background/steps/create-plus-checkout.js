@@ -3,6 +3,7 @@
 })(typeof self !== 'undefined' ? self : globalThis, function createBackgroundPlusCheckoutCreateModule() {
   const PLUS_CHECKOUT_SOURCE = 'plus-checkout';
   const PAYPAL_SOURCE = 'paypal-flow';
+  const SIGNUP_PAGE_SOURCE = 'signup-page';
   const PLUS_CHECKOUT_ENTRY_URL = 'https://chatgpt.com/';
   const PLUS_CHECKOUT_INJECT_FILES = ['content/utils.js', 'content/operation-delay.js', 'content/plus-checkout.js'];
   const PAYPAL_INJECT_FILES = ['content/utils.js', 'content/operation-delay.js', 'content/paypal-flow.js'];
@@ -10,8 +11,17 @@
   const PLUS_PAYMENT_METHOD_GOPAY = 'gopay';
   const PLUS_PAYMENT_METHOD_GPC_HELPER = 'gpc-helper';
   const DEFAULT_GPC_HELPER_API_URL = 'https://your-gpc-helper-domain.example';
-  const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL = 'https://gujumpgate.zg.fyi/api/checkout';
-  const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY = '2KwVxE6f0ABH002JLkoQJ9ReRf4_d01y';
+  const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL = 'https://payurl.ark2.cn/api/checkout';
+  const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY = '';
+  const LEGACY_BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL = 'https://gujumpgate.zg.fyi/api/checkout';
+  const PAYURL_ARK2_ORIGIN = 'https://payurl.ark2.cn';
+  const PAYURL_ARK2_PLUS_PROMO_CODE = 'STRIPEATLASGPT4BIZ050126';
+  const PAYURL_ARK2_WORKSPACE_NAME = 'linux-do';
+  const PAYURL_ARK2_SEAT_QUANTITY = 2;
+  // 云端转换偶发失败通常来自上游代理或服务短暂抖动；限制为 3 次，避免长时间阻塞创建节点。
+  const CLOUD_CHECKOUT_CONVERSION_MAX_ATTEMPTS = 3;
+  // 失败后留出 1 秒给代理连接和云端服务恢复，避免立刻重复打到同一个瞬时故障。
+  const CLOUD_CHECKOUT_CONVERSION_RETRY_DELAY_MS = 1000;
   const GPC_HELPER_PHONE_MODE_AUTO = 'auto';
   const GPC_HELPER_PHONE_MODE_MANUAL = 'manual';
   const CHECKOUT_READY_URL_PATTERN = /^https:\/\/(?:chatgpt\.com\/checkout|pay\.openai\.com\/c\/pay|checkout\.stripe\.com\/c\/pay)(?:\/|$)/i;
@@ -67,11 +77,11 @@
       chrome,
       completeNodeFromBackground,
       createAutomationTab = null,
-      enableHostedCheckoutAutomation = false,
       ensureContentScriptReadyOnTabUntilStopped,
-      failNodeFromBackground = null,
       fetch: fetchImpl = null,
+      getTabId = null,
       getState = null,
+      isTabAlive = null,
       requestStop = null,
       registerTab,
       restoreCheckoutScopedProxySnapshot = null,
@@ -83,10 +93,30 @@
       throwIfStopped = () => {},
     } = deps;
 
+    let activeLogContext = {
+      step: 4,
+      stepKey: 'plus-checkout-create',
+    };
+
+    function setActiveLogContext(step, stepKey) {
+      const previous = { ...activeLogContext };
+      activeLogContext = {
+        step,
+        stepKey,
+      };
+      return previous;
+    }
+
+    function restoreActiveLogContext(previous = null) {
+      if (previous?.stepKey) {
+        activeLogContext = previous;
+      }
+    }
+
     function addLog(message, level = 'info', options = {}) {
       return rawAddLog(message, level, {
-        step: 6,
-        stepKey: 'plus-checkout-create',
+        step: activeLogContext.step,
+        stepKey: activeLogContext.stepKey,
         ...(options && typeof options === 'object' ? options : {}),
       });
     }
@@ -138,6 +168,20 @@
 
     function isPayPalHermesUrl(url = '') {
       return /paypal\.com\/webapps\/hermes/i.test(String(url || ''));
+    }
+
+    function isLoggedInChatGptCandidateUrl(url = '') {
+      try {
+        const parsed = new URL(String(url || ''));
+        const hostname = String(parsed.hostname || '').toLowerCase();
+        const pathname = String(parsed.pathname || '').toLowerCase();
+        return ['chatgpt.com', 'www.chatgpt.com', 'chat.openai.com'].includes(hostname)
+          && !pathname.startsWith('/auth/')
+          && !pathname.startsWith('/login')
+          && !pathname.startsWith('/signin');
+      } catch {
+        return false;
+      }
     }
 
     function isHostedCheckoutNonFreeTrialFailure(error) {
@@ -205,6 +249,43 @@
         : { country: 'US', currency: 'USD' };
     }
 
+    function buildPayurlArk2CheckoutPayload(accessToken, paymentMethod = PLUS_PAYMENT_METHOD_PAYPAL) {
+      const billingDetails = getCheckoutBillingDetailsForPaymentMethod(paymentMethod);
+      return {
+        token: String(accessToken || '').trim(),
+        plan: 'plus',
+        checkout_ui_mode: 'hosted',
+        ui_language: 'en',
+        country: billingDetails.country,
+        currency: billingDetails.currency,
+        proxy: '',
+        use_promo: true,
+        promo_code: PAYURL_ARK2_PLUS_PROMO_CODE,
+        workspace_name: PAYURL_ARK2_WORKSPACE_NAME,
+        seat_quantity: PAYURL_ARK2_SEAT_QUANTITY,
+      };
+    }
+
+    function isPayurlArk2CheckoutApiUrl(parsedApiUrl) {
+      return parsedApiUrl?.origin === PAYURL_ARK2_ORIGIN
+        && parsedApiUrl?.pathname === '/api/checkout';
+    }
+
+    function hashPlusCheckoutCloudConversionApiKey(value = '') {
+      let result = 2166136261;
+      for (const char of String(value || '')) {
+        result ^= char.charCodeAt(0);
+        result = Math.imul(result, 16777619) >>> 0;
+      }
+      return result;
+    }
+
+    function isLegacyBuiltinPlusCheckoutCloudConversionApiKey(value = '') {
+      const apiKey = String(value || '').trim();
+      return apiKey.length === 32
+        && hashPlusCheckoutCloudConversionApiKey(apiKey) === 34569639;
+    }
+
     function formatCloudCheckoutErrorDetail(value, fallback = '') {
       if (typeof value === 'string') {
         return value.trim() || fallback;
@@ -213,6 +294,46 @@
         return String(value.message || value.detail || value.error || JSON.stringify(value)).trim() || fallback;
       }
       return String(value ?? fallback).trim() || fallback;
+    }
+
+    function stringifyCloudCheckoutRequestBody(requestBody = {}) {
+      try {
+        return JSON.stringify(requestBody);
+      } catch {
+        return String(requestBody || '');
+      }
+    }
+
+    async function logCloudCheckoutFailureRequestBody(requestBody = {}) {
+      // 云端接口故障排查需要看到实际入参；这里按当前需求保留 token 明文。
+      await addLog(`步骤 4：云端支付转换请求体：${stringifyCloudCheckoutRequestBody(requestBody)}`, 'error');
+    }
+
+    function firstNonEmptyString(...values) {
+      for (const value of values) {
+        if (typeof value !== 'string') {
+          continue;
+        }
+        const normalized = value.trim();
+        if (normalized) {
+          return normalized;
+        }
+      }
+      return '';
+    }
+
+    function pickCloudCheckoutUrl(data) {
+      return firstNonEmptyString(
+        data?.url,
+        data?.openai_payurl,
+        data?.preferredCheckoutUrl,
+        data?.hostedCheckoutUrl,
+        data?.convertedCheckoutUrl,
+        data?.chatgptCheckoutUrl,
+        data?.checkoutUrl,
+        data?.chatgpt_checkout_url,
+        data?.checkout_url
+      );
     }
 
     function normalizeCheckoutConversionProxyProtocol(value = '') {
@@ -636,7 +757,7 @@ function FindProxyForURL(url, host) {
       if (isPlusCheckoutCloudConversionEnabled(state, paymentMethod)) {
         const proxyUrl = normalizeCheckoutConversionProxyUrl(state?.plusCheckoutConversionProxyUrl);
         if (proxyUrl) {
-          await addLog('步骤 6：已启用云端支付转换，本地支付转换代理配置已忽略。', 'info');
+          await addLog('步骤 4：已启用云端支付转换，本地支付转换代理配置已忽略。', 'info');
         }
         return null;
       }
@@ -651,7 +772,7 @@ function FindProxyForURL(url, host) {
         targetHostPatterns: CHECKOUT_CONVERSION_PROXY_TARGET_HOST_PATTERNS,
       });
       const displayName = String(snapshot?.displayName || describeCheckoutConversionProxyEntry(snapshot?.entry) || proxyUrl).trim();
-      await addLog(`步骤 6：已启用支付转换代理 ${displayName}，仅临时接管 checkout session 到 hosted checkout 的跳转链路。`, 'info');
+      await addLog(`步骤 4：已启用支付转换代理 ${displayName}，仅临时接管 checkout session 到 hosted checkout 的跳转链路。`, 'info');
       return snapshot;
     }
 
@@ -663,7 +784,7 @@ function FindProxyForURL(url, host) {
         ? restoreCheckoutScopedProxySnapshot
         : defaultRestoreCheckoutScopedProxySnapshot;
       await restoreProxy(snapshot);
-      await addLog('步骤 6：支付转换代理已释放，后续步骤恢复原网络/原代理环境。', 'info');
+      await addLog('步骤 4：支付转换代理已释放，后续步骤恢复原网络/原代理环境。', 'info');
     }
 
     function normalizeHostedCheckoutPoolText(value = '') {
@@ -1044,12 +1165,69 @@ function FindProxyForURL(url, host) {
         : await chrome.tabs.create({ url: PLUS_CHECKOUT_ENTRY_URL, active: true });
       const tabId = Number(tab?.id);
       if (!Number.isInteger(tabId)) {
-        throw new Error('步骤 6：打开 ChatGPT 页面失败，无法创建订阅页。');
+        throw new Error('步骤 4：打开 ChatGPT 页面失败，无法创建订阅页。');
       }
       if (typeof registerTab === 'function') {
         await registerTab(PLUS_CHECKOUT_SOURCE, tabId);
       }
       return tabId;
+    }
+
+    async function tryReuseSignupPageTabForCheckoutCreate() {
+      if (typeof getTabId !== 'function' || typeof isTabAlive !== 'function' || !chrome?.tabs?.get) {
+        return { tabId: 0, reused: false };
+      }
+
+      const signupTabId = Number(await getTabId(SIGNUP_PAGE_SOURCE).catch(() => 0)) || 0;
+      const signupTabAlive = await isTabAlive(SIGNUP_PAGE_SOURCE).catch(() => false);
+      if (!signupTabId || !signupTabAlive) {
+        return { tabId: 0, reused: false };
+      }
+
+      const tab = await chrome.tabs.get(signupTabId).catch(() => null);
+      if (!tab?.id || !isLoggedInChatGptCandidateUrl(tab.url || '')) {
+        await addLog('步骤 4：登录后标签页当前不在 ChatGPT 已登录页面，改为新开 ChatGPT 页面创建 Checkout。', 'info');
+        return { tabId: 0, reused: false };
+      }
+
+      try {
+        // 复用前先注入 plus-checkout 脚本，避免把后续创建动作绑定到 signup-page 旧处理器。
+        await waitForTabCompleteUntilStopped(signupTabId);
+        await ensureContentScriptReadyOnTabUntilStopped(PLUS_CHECKOUT_SOURCE, signupTabId, {
+          inject: PLUS_CHECKOUT_INJECT_FILES,
+          injectSource: PLUS_CHECKOUT_SOURCE,
+          logMessage: '步骤 4：正在复用登录后的 ChatGPT 标签页，等待 Checkout 脚本就绪...',
+        });
+        if (typeof registerTab === 'function') {
+          await registerTab(PLUS_CHECKOUT_SOURCE, signupTabId);
+        }
+        await addLog('步骤 4：已复用登录后的 ChatGPT 标签页创建 Plus Checkout。', 'info');
+        return { tabId: signupTabId, reused: true };
+      } catch (error) {
+        await addLog(`步骤 4：复用登录标签页失败，改为新开 ChatGPT 页面：${error?.message || error}`, 'warn');
+        return { tabId: 0, reused: false };
+      }
+    }
+
+    async function openCheckoutCreationTab() {
+      const reusable = await tryReuseSignupPageTabForCheckoutCreate();
+      if (reusable.tabId) {
+        return reusable;
+      }
+      return {
+        tabId: await openFreshChatGptTabForCheckoutCreate(),
+        reused: false,
+      };
+    }
+
+    async function prepareCheckoutCreationTab(tabId, logMessage = '') {
+      await waitForTabCompleteUntilStopped(tabId);
+      await sleepWithStop(1000);
+      await ensureContentScriptReadyOnTabUntilStopped(PLUS_CHECKOUT_SOURCE, tabId, {
+        inject: PLUS_CHECKOUT_INJECT_FILES,
+        injectSource: PLUS_CHECKOUT_SOURCE,
+        logMessage: logMessage || '步骤 4：正在等待 ChatGPT 页面完成加载，再继续创建订阅页...',
+      });
     }
 
     function buildHostedCheckoutRandomEmail() {
@@ -1192,12 +1370,12 @@ function FindProxyForURL(url, host) {
       return '';
     }
 
-    async function fetchHostedCheckoutVerificationCode() {
+    async function fetchHostedCheckoutVerificationCode(visibleStep = 6) {
       const runtimeConfig = await getHostedCheckoutRuntimeConfig({
         ensureCurrentSmsEntry: true,
       });
       const verificationUrl = runtimeConfig.verificationUrl;
-      await addLog(`步骤 6：当前 hosted checkout 验证码接口配置为 ${verificationUrl || '(空)'}。`, 'info');
+      await addLog(`步骤 ${visibleStep}：当前 hosted checkout 验证码接口配置为 ${verificationUrl || '(空)'}。`, 'info');
       const fetcher = typeof fetchImpl === 'function'
         ? fetchImpl
         : (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
@@ -1283,18 +1461,18 @@ function FindProxyForURL(url, host) {
       }
     }
 
-    async function pollHostedCheckoutVerificationCode() {
+    async function pollHostedCheckoutVerificationCode(visibleStep = 6) {
       let lastError = null;
       for (let attempt = 1; attempt <= HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS; attempt += 1) {
         throwIfStopped();
         try {
-          const code = await fetchHostedCheckoutVerificationCode();
-          await addLog(`步骤 6：已获取 hosted checkout 验证码（${attempt}/${HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS}）。`, 'info');
+          const code = await fetchHostedCheckoutVerificationCode(visibleStep);
+          await addLog(`步骤 ${visibleStep}：已获取 hosted checkout 验证码（${attempt}/${HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS}）。`, 'info');
           return code;
         } catch (error) {
           lastError = error;
           await addLog(
-            `步骤 6：hosted checkout 验证码暂不可用（${attempt}/${HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS}）：${error?.message || error}`,
+            `步骤 ${visibleStep}：hosted checkout 验证码暂不可用（${attempt}/${HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS}）：${error?.message || error}`,
             'warn'
           );
           if (attempt < HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS) {
@@ -1305,7 +1483,7 @@ function FindProxyForURL(url, host) {
       throw lastError || new Error('hosted checkout 验证码轮询失败。');
     }
 
-    async function waitForHostedCheckoutVerificationPopupDelay() {
+    async function waitForHostedCheckoutVerificationPopupDelay(visibleStep = 6) {
       const runtimeConfig = await getHostedCheckoutRuntimeConfig({
         ensureCurrentSmsEntry: true,
       });
@@ -1315,17 +1493,17 @@ function FindProxyForURL(url, host) {
       if (delaySeconds <= 0) {
         return;
       }
-      await addLog(`步骤 6：已检测到 hosted checkout 验证码弹窗，按设置等待 ${delaySeconds} 秒后再获取验证码。`, 'info');
+      await addLog(`步骤 ${visibleStep}：已检测到 hosted checkout 验证码弹窗，按设置等待 ${delaySeconds} 秒后再获取验证码。`, 'info');
       await sleepWithStop(delaySeconds * 1000);
     }
 
-    async function runHostedCheckoutOpenAiFlow(tabId, guestProfile) {
+    async function runHostedCheckoutOpenAiFlow(tabId, guestProfile, visibleStep = 5) {
       await ensureContentScriptReadyOnTabUntilStopped(PLUS_CHECKOUT_SOURCE, tabId, {
         inject: PLUS_CHECKOUT_INJECT_FILES,
         injectSource: PLUS_CHECKOUT_SOURCE,
-        logMessage: '步骤 6：hosted checkout 页面仍在加载，等待脚本就绪...',
+        logMessage: `步骤 ${visibleStep}：hosted checkout 页面仍在加载，等待脚本就绪...`,
       });
-      await addLog('步骤 6：hosted checkout 已打开，正在按油猴脚本顺序自动切换 PayPal、填写地址并提交...', 'info');
+      await addLog(`步骤 ${visibleStep}：hosted checkout 已打开，正在按油猴脚本顺序自动切换 PayPal、填写地址并提交...`, 'info');
       const initialResult = await sendTabMessageUntilStopped(tabId, PLUS_CHECKOUT_SOURCE, {
         type: 'RUN_HOSTED_OPENAI_CHECKOUT_STEP',
         source: 'background',
@@ -1343,7 +1521,7 @@ function FindProxyForURL(url, host) {
         throwIfStopped();
         const tab = await chrome?.tabs?.get?.(tabId).catch(() => null);
         if (!tab) {
-          throw new Error('步骤 6：hosted checkout 标签页已关闭。');
+          throw new Error(`步骤 ${visibleStep}：hosted checkout 标签页已关闭。`);
         }
         const currentUrl = String(tab.url || '').trim();
         if (isPayPalUrl(currentUrl) || isPaymentsSuccessUrl(currentUrl)) {
@@ -1362,8 +1540,8 @@ function FindProxyForURL(url, host) {
           throw new Error(state.error);
         }
         if (state?.hostedVerificationVisible && !verificationSubmitted) {
-          await addLog('步骤 6：检测到 hosted checkout OpenAI 验证码弹窗，正在获取并填写验证码...', 'info');
-          const verificationCode = await pollHostedCheckoutVerificationCode();
+          await addLog(`步骤 ${visibleStep}：检测到 hosted checkout OpenAI 验证码弹窗，正在获取并填写验证码...`, 'info');
+          const verificationCode = await pollHostedCheckoutVerificationCode(visibleStep);
           const verifyResult = await sendTabMessageUntilStopped(tabId, PLUS_CHECKOUT_SOURCE, {
             type: 'RUN_HOSTED_OPENAI_CHECKOUT_STEP',
             source: 'background',
@@ -1379,7 +1557,7 @@ function FindProxyForURL(url, host) {
         await sleepWithStop(500);
       }
 
-      throw new Error('步骤 6：hosted checkout OpenAI/Stripe 页面提交后长时间未跳转到 PayPal 或成功页。');
+      throw new Error(`步骤 ${visibleStep}：hosted checkout OpenAI/Stripe 页面提交后长时间未跳转到 PayPal 或成功页。`);
     }
 
     async function runHostedCheckoutPayPalStep(tabId, payload = {}) {
@@ -1428,7 +1606,7 @@ function FindProxyForURL(url, host) {
       if (!successTab?.url || !isPaymentsSuccessUrl(successTab.url)) {
         throw new Error('步骤 6：hosted checkout 已离开 PayPal，但长时间未回到 ChatGPT 支付成功页。');
       }
-      await addLog('步骤 6：hosted checkout 已回到 ChatGPT 支付成功页，等待扩展继续后续 OAuth 流程。', 'ok');
+      await addLog('步骤 6：hosted checkout 已回到 ChatGPT 支付成功页，等待扩展继续 Plus 开通成功确认。', 'ok');
       return successTab;
     }
 
@@ -1465,6 +1643,27 @@ function FindProxyForURL(url, host) {
         }
 
         const pageState = await getHostedCheckoutPayPalState(tabId);
+        if (pageState.hostedStage === 'generic_error') {
+          await addLog(
+            `步骤 6：检测到 PayPal hosted checkout 错误页（${pageState.paypalHostedErrorCode || '未知错误'}），正在进入账号检查页以退出旧 PayPal 登录态...`,
+            'warn'
+          );
+          await runHostedCheckoutPayPalStep(tabId, {
+            ...guestProfile,
+          });
+          await sleepWithStop(1500);
+          continue;
+        }
+
+        if (pageState.hostedStage === 'account_logout') {
+          await addLog('步骤 6：检测到 PayPal 账号检查页，正在退出上一个 PayPal 登录态后继续当前 hosted checkout...', 'warn');
+          await runHostedCheckoutPayPalStep(tabId, {
+            ...guestProfile,
+          });
+          await sleepWithStop(2500);
+          continue;
+        }
+
         if (pageState.hostedStage === 'verification' && pageState.verificationInputsVisible) {
           await addLog('步骤 6：检测到 PayPal hosted checkout 验证码弹窗，正在获取并填写验证码...', 'info');
           await waitForHostedCheckoutVerificationPopupDelay();
@@ -1522,65 +1721,6 @@ function FindProxyForURL(url, host) {
         await sleepWithStop(1000);
       }
       throw new Error('步骤 6：hosted checkout PayPal 自动化超时，长时间未完成支付链路。');
-    }
-
-    async function runHostedCheckoutAutomation(tabId, completionPayload = {}) {
-      const runtimeConfig = await getHostedCheckoutRuntimeConfig({
-        ensureCurrentSmsEntry: true,
-      });
-      const address = await fetchHostedCheckoutAddress();
-      await addLog(`步骤 6：hosted checkout 配置快照：${JSON.stringify(runtimeConfig?.diagnostics || {})}`, 'info');
-      await addLog(`步骤 6：hosted checkout 初始电话配置为 ${runtimeConfig.phone || '(空)'}。`, 'info');
-      await addLog(`步骤 6：hosted checkout 地址数据：${JSON.stringify(address)}`, 'info');
-      const guestProfile = buildHostedCheckoutGuestProfile(address, runtimeConfig);
-      await runHostedCheckoutOpenAiFlow(tabId, guestProfile);
-
-      const transitionTab = await waitForUrlMatch(
-        tabId,
-        (url) => isPayPalUrl(url) || isPaymentsSuccessUrl(url),
-        HOSTED_CHECKOUT_TRANSITION_TIMEOUT_MS,
-        500
-      );
-      const transitionUrl = String(transitionTab?.url || '').trim();
-      if (!transitionUrl) {
-        throw new Error('步骤 6：hosted checkout 提交后长时间未跳转到 PayPal 或 ChatGPT 支付成功页。');
-      }
-      if (isPaymentsSuccessUrl(transitionUrl)) {
-        await addLog('步骤 6：hosted checkout 在提交后已直接进入 ChatGPT 支付成功页。', 'ok');
-        await completeNodeFromBackground('plus-checkout-create', completionPayload);
-        return;
-      }
-
-      await addLog('步骤 6：hosted checkout 已跳转到 PayPal，准备继续 guest/card 流自动化。', 'info');
-      await runHostedCheckoutPayPalFlow(tabId, guestProfile);
-      await addLog('步骤 6：hosted checkout 支付链路已完成，准备进入下一步。', 'ok');
-      await completeNodeFromBackground('plus-checkout-create', completionPayload);
-    }
-
-    function startHostedCheckoutAutomation(tabId, completionPayload = {}) {
-      if (!enableHostedCheckoutAutomation) {
-        return;
-      }
-      void runHostedCheckoutAutomation(tabId, completionPayload)
-        .catch(async (error) => {
-          const message = error?.message || String(error || 'hosted checkout automation failed');
-          if (isHostedCheckoutNonFreeTrialFailure(error)) {
-            const stopReason = stripHostedCheckoutNonFreeTrialPrefix(message)
-              || '步骤 6：检测到当前账号没有免费试用资格，已自动停止整个流程。';
-            await addLog(stopReason, 'warn');
-            if (typeof requestStop === 'function') {
-              await requestStop({ logMessage: false });
-              return;
-            }
-          }
-          await addLog(`步骤 6：hosted checkout 自动化失败：${message}`, 'error');
-          if (typeof failNodeFromBackground === 'function') {
-            await failNodeFromBackground('plus-checkout-create', message);
-          }
-        })
-        .finally(async () => {
-          await clearHostedCheckoutCurrentSmsEntry();
-        });
     }
 
     function normalizeHelperCountryCode(countryCode = '86') {
@@ -1834,7 +1974,7 @@ function FindProxyForURL(url, host) {
       await ensureContentScriptReadyOnTabUntilStopped(PLUS_CHECKOUT_SOURCE, tabId, {
         inject: PLUS_CHECKOUT_INJECT_FILES,
         injectSource: PLUS_CHECKOUT_SOURCE,
-        logMessage: '步骤 6：正在等待 ChatGPT 页面完成加载，再继续获取 accessToken...',
+        logMessage: '步骤 4：正在等待 ChatGPT 页面完成加载，再继续获取 accessToken...',
       });
 
       const sessionResult = await sendTabMessageUntilStopped(tabId, PLUS_CHECKOUT_SOURCE, {
@@ -1854,74 +1994,122 @@ function FindProxyForURL(url, host) {
     async function generateCloudCheckoutFromApi(accessToken = '', paymentMethod = PLUS_PAYMENT_METHOD_PAYPAL, state = {}) {
       const token = String(accessToken || '').trim();
       if (!token) {
-        throw new Error('步骤 6：云端支付转换缺少 accessToken。');
+        throw new Error('步骤 4：云端支付转换缺少 accessToken。');
       }
 
-      const apiUrl = normalizePlusCheckoutCloudConversionApiUrl(
-        state?.plusCheckoutCloudConversionApiUrl || BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL
-      );
+      const configuredApiUrl = normalizePlusCheckoutCloudConversionApiUrl(state?.plusCheckoutCloudConversionApiUrl);
+      const apiUrl = configuredApiUrl && configuredApiUrl !== LEGACY_BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL
+        ? configuredApiUrl
+        : BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL;
       if (!apiUrl) {
-        throw new Error('步骤 6：已启用云端支付转换，但未配置云端服务地址。');
+        throw new Error('步骤 4：已启用云端支付转换，但未配置云端服务地址。');
       }
+      let parsedApiUrl = null;
       try {
-        const parsed = new URL(apiUrl);
-        if (!/^https?:$/i.test(String(parsed.protocol || ''))) {
+        parsedApiUrl = new URL(apiUrl);
+        if (!/^https?:$/i.test(String(parsedApiUrl.protocol || ''))) {
           throw new Error('unsupported protocol');
         }
       } catch {
-        throw new Error('步骤 6：云端支付转换服务地址不是有效的 HTTP/HTTPS URL。');
+        throw new Error('步骤 4：云端支付转换服务地址不是有效的 HTTP/HTTPS URL。');
       }
 
       const billingDetails = getCheckoutBillingDetailsForPaymentMethod(paymentMethod);
-      const headers = {
-        Accept: 'application/json',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Content-Type': 'application/json',
-      };
-      const apiKey = String(state?.plusCheckoutCloudConversionApiKey || BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY).trim();
+      const isPayurlArk2Api = isPayurlArk2CheckoutApiUrl(parsedApiUrl);
+      const headers = isPayurlArk2Api
+        ? {
+          Accept: '*/*',
+          'Accept-Language': 'zh-CN,zh;q=0.9',
+          'Cache-Control': 'no-cache',
+          'Content-Type': 'application/json',
+          Origin: parsedApiUrl.origin,
+          Pragma: 'no-cache',
+          Referer: `${parsedApiUrl.origin}/`,
+        }
+        : {
+          Accept: 'application/json',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Content-Type': 'application/json',
+          Origin: parsedApiUrl.origin,
+          Referer: `${parsedApiUrl.origin}/`,
+        };
+      const configuredApiKey = String(state?.plusCheckoutCloudConversionApiKey || '').trim();
+      const apiKey = isPayurlArk2Api
+        ? configuredApiKey
+        : configuredApiKey || BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY;
       if (apiKey) {
-        headers['X-API-Key'] = apiKey;
+        const isLegacyBuiltinApiKey = isLegacyBuiltinPlusCheckoutCloudConversionApiKey(apiKey);
+        if (!isPayurlArk2Api || !isLegacyBuiltinApiKey) {
+          headers['X-API-Key'] = apiKey;
+        }
       }
-
-      const { response, data } = await fetchJsonWithTimeout(apiUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
+      const requestBody = isPayurlArk2Api
+        ? buildPayurlArk2CheckoutPayload(token, paymentMethod)
+        : {
           accessToken: token,
           paymentMethod: normalizePlusPaymentMethod(paymentMethod),
           country: billingDetails.country,
           currency: billingDetails.currency,
-        }),
-      }, 45000);
+        };
 
-      const targetCheckoutUrl = String(
-        data?.preferredCheckoutUrl
-        || data?.hostedCheckoutUrl
-        || data?.convertedCheckoutUrl
-        || data?.chatgptCheckoutUrl
-        || data?.checkoutUrl
-        || ''
-      ).trim();
-      if (!response?.ok || !targetCheckoutUrl) {
-        const detail = formatCloudCheckoutErrorDetail(
-          data?.detail || data?.message || data?.error,
-          `HTTP ${response?.status || 0}`
-        );
-        throw new Error(`步骤 6：云端支付转换失败：${detail}`);
+      let lastError = null;
+      for (let attempt = 1; attempt <= CLOUD_CHECKOUT_CONVERSION_MAX_ATTEMPTS; attempt += 1) {
+        let response = null;
+        let data = null;
+        lastError = null;
+        try {
+          const fetchResult = await fetchJsonWithTimeout(apiUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(requestBody),
+          }, 45000);
+          response = fetchResult.response;
+          data = fetchResult.data;
+        } catch (error) {
+          lastError = error;
+        }
+
+        if (!lastError) {
+          const targetCheckoutUrl = pickCloudCheckoutUrl(data);
+          if (response?.ok && targetCheckoutUrl) {
+            return {
+              checkoutUrl: firstNonEmptyString(data?.checkoutUrl, data?.checkout_url),
+              chatgptCheckoutUrl: firstNonEmptyString(data?.chatgptCheckoutUrl, data?.chatgpt_checkout_url),
+              checkoutSessionId: firstNonEmptyString(data?.checkoutSessionId, data?.checkout_session_id),
+              processorEntity: String(data?.processorEntity || '').trim(),
+              hostedCheckoutUrl: firstNonEmptyString(data?.url, data?.openai_payurl, data?.hostedCheckoutUrl),
+              convertedCheckoutUrl: firstNonEmptyString(
+                data?.chatgptCheckoutUrl,
+                data?.convertedCheckoutUrl,
+                data?.chatgpt_checkout_url
+              ),
+              preferredCheckoutUrl: targetCheckoutUrl,
+              country: String(data?.country || billingDetails.country).trim() || billingDetails.country,
+              currency: String(data?.currency || billingDetails.currency).trim() || billingDetails.currency,
+              checkoutSource: 'cloud-converted-checkout',
+            };
+          }
+
+          const fallback = response?.ok ? '没有返回支付链接' : `HTTP ${response?.status || 0}`;
+          const detail = formatCloudCheckoutErrorDetail(
+            data?.error || data?.message || data?.detail,
+            fallback
+          );
+          lastError = new Error(`步骤 4：云端支付转换失败：${detail}`);
+        }
+
+        if (attempt < CLOUD_CHECKOUT_CONVERSION_MAX_ATTEMPTS) {
+          const message = String(lastError?.message || lastError || '未知错误').trim() || '未知错误';
+          await addLog(
+            `步骤 4：云端支付转换第 ${attempt}/${CLOUD_CHECKOUT_CONVERSION_MAX_ATTEMPTS} 次失败：${message}，准备重试...`,
+            'warn'
+          );
+          await sleepWithStop(CLOUD_CHECKOUT_CONVERSION_RETRY_DELAY_MS);
+        }
       }
 
-      return {
-        checkoutUrl: String(data?.checkoutUrl || '').trim(),
-        chatgptCheckoutUrl: String(data?.chatgptCheckoutUrl || '').trim(),
-        checkoutSessionId: String(data?.checkoutSessionId || '').trim(),
-        processorEntity: String(data?.processorEntity || '').trim(),
-        hostedCheckoutUrl: String(data?.hostedCheckoutUrl || '').trim(),
-        convertedCheckoutUrl: String(data?.chatgptCheckoutUrl || data?.convertedCheckoutUrl || '').trim(),
-        preferredCheckoutUrl: targetCheckoutUrl,
-        country: String(data?.country || billingDetails.country).trim() || billingDetails.country,
-        currency: String(data?.currency || billingDetails.currency).trim() || billingDetails.currency,
-        checkoutSource: 'cloud-converted-checkout',
-      };
+      await logCloudCheckoutFailureRequestBody(requestBody);
+      throw lastError;
     }
 
     async function generateGpcCheckoutFromApi(accessToken = '', state = {}) {
@@ -1996,7 +2184,7 @@ function FindProxyForURL(url, host) {
     async function executeGpcCheckoutCreate(state = {}) {
       let accessToken = String(state?.contributionAccessToken || state?.accessToken || state?.chatgptAccessToken || '').trim();
       if (!accessToken) {
-        await addLog('步骤 6：正在获取 accessToken...', 'info');
+        await addLog('步骤 4：正在获取 accessToken...', 'info');
         const tokenTabId = await openFreshChatGptTabForCheckoutCreate();
         try {
           accessToken = await readAccessTokenFromChatGptSessionTab(tokenTabId);
@@ -2007,10 +2195,10 @@ function FindProxyForURL(url, host) {
         }
       }
       if (!accessToken) {
-        throw new Error('步骤 6：GPC 模式获取 accessToken 失败。');
+        throw new Error('步骤 4：GPC 模式获取 accessToken 失败。');
       }
 
-      await addLog('步骤 6：正在调用 GPC 接口创建订单...', 'info');
+      await addLog('步骤 4：正在调用 GPC 接口创建订单...', 'info');
       const result = await generateGpcCheckoutFromApi(accessToken, state);
       await setState({
         plusCheckoutTabId: null,
@@ -2035,7 +2223,7 @@ function FindProxyForURL(url, host) {
         gopayHelperStartPayload: null,
         gopayHelperOrderCreatedAt: result.orderCreatedAt || Date.now(),
       });
-      await addLog(`步骤 6：GPC ${result.phoneMode === GPC_HELPER_PHONE_MODE_AUTO ? '自动' : '手动'}模式任务已创建（task_id: ${result.taskId}），准备继续下一步。`, 'info');
+      await addLog(`步骤 4：GPC ${result.phoneMode === GPC_HELPER_PHONE_MODE_AUTO ? '自动' : '手动'}模式任务已创建（task_id: ${result.taskId}），准备继续下一步。`, 'info');
       await completeNodeFromBackground('plus-checkout-create', {
         plusCheckoutCountry: result.country || 'ID',
         plusCheckoutCurrency: result.currency || 'IDR',
@@ -2043,51 +2231,178 @@ function FindProxyForURL(url, host) {
       });
     }
 
-    async function executePlusCheckoutCreate(state = {}) {
-      const paymentMethod = normalizePlusPaymentMethod(state?.plusPaymentMethod);
-      if (paymentMethod === PLUS_PAYMENT_METHOD_GPC_HELPER) {
-        await executeGpcCheckoutCreate(state);
-        return;
+    async function resolveStoredHostedCheckoutTabId(state = {}, stepLabel = 'Hosted Checkout') {
+      const tabId = Number(state?.plusCheckoutTabId) || 0;
+      if (!tabId) {
+        throw new Error(`${stepLabel} 缺少 Plus Checkout 标签页，请先重新执行第 4 步。`);
       }
-      await clearHostedCheckoutCurrentSmsEntry();
+      const tab = await chrome?.tabs?.get?.(tabId).catch(() => null);
+      if (!tab?.id) {
+        throw new Error(`${stepLabel} 的 Plus Checkout 标签页已关闭，请先重新执行第 4 步。`);
+      }
+      return { tabId, tab };
+    }
+
+    async function buildHostedCheckoutGuestProfileFromRuntime(visibleStep = 5) {
+      const runtimeConfig = await getHostedCheckoutRuntimeConfig({
+        ensureCurrentSmsEntry: true,
+      });
+      const address = await fetchHostedCheckoutAddress();
+      await addLog(`步骤 ${visibleStep}：hosted checkout 配置快照：${JSON.stringify(runtimeConfig?.diagnostics || {})}`, 'info');
+      await addLog(`步骤 ${visibleStep}：hosted checkout 初始电话配置为 ${runtimeConfig.phone || '(空)'}。`, 'info');
+      await addLog(`步骤 ${visibleStep}：hosted checkout 地址数据：${JSON.stringify(address)}`, 'info');
+      return buildHostedCheckoutGuestProfile(address, runtimeConfig);
+    }
+
+    async function executeHostedCheckoutSubmit(state = {}) {
+      const previousLogContext = setActiveLogContext(5, 'hosted-checkout-submit');
+      try {
+        const { tabId } = await resolveStoredHostedCheckoutTabId(state, '步骤 5：填写 Hosted Checkout');
+        const guestProfile = await buildHostedCheckoutGuestProfileFromRuntime(5);
+        const transition = await runHostedCheckoutOpenAiFlow(tabId, guestProfile, 5);
+        const latestTab = await chrome?.tabs?.get?.(tabId).catch(() => null);
+        await setState({
+          plusCheckoutTabId: tabId,
+          plusCheckoutUrl: String(latestTab?.url || transition?.url || state?.plusCheckoutUrl || '').trim(),
+        });
+        await addLog('步骤 5：Hosted Checkout 已提交，准备进入 PayPal Hosted 支付步骤。', 'ok');
+        await completeNodeFromBackground('hosted-checkout-submit', {
+          plusCheckoutTabId: tabId,
+        });
+      } catch (error) {
+        if (isHostedCheckoutNonFreeTrialFailure(error)) {
+          const stopReason = stripHostedCheckoutNonFreeTrialPrefix(error?.message || String(error || ''))
+            || '步骤 5：检测到当前账号没有免费试用资格，已自动停止整个流程。';
+          await addLog(stopReason, 'warn');
+          if (typeof requestStop === 'function') {
+            await requestStop({ logMessage: false });
+          }
+          throw new Error(stopReason);
+        }
+        throw error;
+      } finally {
+        await clearHostedCheckoutCurrentSmsEntry();
+        restoreActiveLogContext(previousLogContext);
+      }
+    }
+
+    async function executeHostedPayPalPayment(state = {}) {
+      const previousLogContext = setActiveLogContext(6, 'hosted-paypal-payment');
+      try {
+        const { tabId, tab } = await resolveStoredHostedCheckoutTabId(state, '步骤 6：处理 PayPal Hosted 支付');
+        const currentUrl = String(tab?.url || '').trim();
+        if (isPaymentsSuccessUrl(currentUrl)) {
+          await addLog('步骤 6：当前标签页已在 ChatGPT 支付成功页，直接完成 PayPal Hosted 支付步骤。', 'ok');
+          await completeNodeFromBackground('hosted-paypal-payment', {
+            plusCheckoutTabId: tabId,
+          });
+          return;
+        }
+        if (!isPayPalUrl(currentUrl)) {
+          throw new Error(`步骤 6：当前标签页不是 PayPal Hosted 支付页，请从第 5 步重新提交 Hosted Checkout。当前 URL：${currentUrl || '(空)'}`);
+        }
+
+        const guestProfile = await buildHostedCheckoutGuestProfileFromRuntime(6);
+        await runHostedCheckoutPayPalFlow(tabId, guestProfile);
+        const latestTab = await chrome?.tabs?.get?.(tabId).catch(() => null);
+        await setState({
+          plusCheckoutTabId: tabId,
+          plusCheckoutUrl: String(latestTab?.url || state?.plusCheckoutUrl || '').trim(),
+        });
+        await addLog('步骤 6：PayPal Hosted 支付链路已完成，准备进入 Plus 开通成功确认。', 'ok');
+        await completeNodeFromBackground('hosted-paypal-payment', {
+          plusCheckoutTabId: tabId,
+        });
+      } finally {
+        await clearHostedCheckoutCurrentSmsEntry();
+        restoreActiveLogContext(previousLogContext);
+      }
+    }
+
+    async function executePlusCheckoutCreate(state = {}) {
+      const previousLogContext = setActiveLogContext(4, 'plus-checkout-create');
+      const paymentMethod = normalizePlusPaymentMethod(state?.plusPaymentMethod);
       let checkoutScopedProxySnapshot = null;
       try {
+        if (paymentMethod === PLUS_PAYMENT_METHOD_GPC_HELPER) {
+          await executeGpcCheckoutCreate(state);
+          return;
+        }
+        await clearHostedCheckoutCurrentSmsEntry();
         checkoutScopedProxySnapshot = await maybeApplyCheckoutConversionProxy(state, paymentMethod);
 
         const paymentMethodLabel = getPlusPaymentMethodLabel(paymentMethod);
         const checkoutModeLabel = getCheckoutModeLabel(state);
-        await addLog(`步骤 6：正在打开新的 ChatGPT 会话，准备创建${checkoutModeLabel}...`, 'info');
-        const tabId = await openFreshChatGptTabForCheckoutCreate();
+        await addLog(`步骤 4：正在准备 ChatGPT 会话，准备创建${checkoutModeLabel}...`, 'info');
+        let creationTab = await openCheckoutCreationTab();
+        let tabId = creationTab.tabId;
 
-        await waitForTabCompleteUntilStopped(tabId);
-        await sleepWithStop(1000);
-        await ensureContentScriptReadyOnTabUntilStopped(PLUS_CHECKOUT_SOURCE, tabId, {
-          inject: PLUS_CHECKOUT_INJECT_FILES,
-          injectSource: PLUS_CHECKOUT_SOURCE,
-          logMessage: '步骤 6：正在等待 ChatGPT 页面完成加载，再继续创建订阅页...',
-        });
+        await prepareCheckoutCreationTab(tabId);
 
         const useCloudCheckoutConversion = isPlusCheckoutCloudConversionEnabled(state, paymentMethod);
         let result = null;
         if (useCloudCheckoutConversion) {
-          await addLog('步骤 6：已启用云端支付转换，正在读取 accessToken 并请求云端服务生成订阅链接...', 'info');
-          const accessToken = await readAccessTokenFromChatGptSessionTab(tabId);
+          await addLog('步骤 4：已启用云端支付转换，正在读取 accessToken 并请求云端服务生成订阅链接...', 'info');
+          let accessToken = await readAccessTokenFromChatGptSessionTab(tabId);
+          if (!accessToken && creationTab.reused) {
+            await addLog('步骤 4：复用登录标签页失败：未读取到 accessToken，改为新开 ChatGPT 页面。', 'warn');
+            creationTab = {
+              tabId: await openFreshChatGptTabForCheckoutCreate(),
+              reused: false,
+            };
+            tabId = creationTab.tabId;
+            await prepareCheckoutCreationTab(tabId);
+            accessToken = await readAccessTokenFromChatGptSessionTab(tabId);
+          }
           if (!accessToken) {
-            throw new Error('步骤 6：云端支付转换未获取到可用 accessToken。');
+            throw new Error('步骤 4：云端支付转换未获取到可用 accessToken。');
           }
           result = await generateCloudCheckoutFromApi(accessToken, paymentMethod, state);
         } else {
           await addLog(
             paymentMethod === PLUS_PAYMENT_METHOD_PAYPAL
-              ? '步骤 6：正在由扩展内部直连生成美国 US Stripe/外部支付链接...'
-              : `步骤 6：正在由扩展内部创建${checkoutModeLabel}...`,
+              ? '步骤 4：正在由扩展内部直连生成美国 US Stripe/外部支付链接...'
+              : `步骤 4：正在由扩展内部创建${checkoutModeLabel}...`,
             'info'
           );
-          result = await sendTabMessageUntilStopped(tabId, PLUS_CHECKOUT_SOURCE, {
-            type: 'CREATE_PLUS_CHECKOUT',
-            source: 'background',
-            payload: { paymentMethod },
-          });
+          try {
+            result = await sendTabMessageUntilStopped(tabId, PLUS_CHECKOUT_SOURCE, {
+              type: 'CREATE_PLUS_CHECKOUT',
+              source: 'background',
+              payload: { paymentMethod },
+            });
+          } catch (error) {
+            if (!creationTab.reused) {
+              throw error;
+            }
+            await addLog(`步骤 4：复用登录标签页创建 Checkout 失败，改为新开 ChatGPT 页面：${error?.message || error}`, 'warn');
+            creationTab = {
+              tabId: await openFreshChatGptTabForCheckoutCreate(),
+              reused: false,
+            };
+            tabId = creationTab.tabId;
+            await prepareCheckoutCreationTab(tabId);
+            result = await sendTabMessageUntilStopped(tabId, PLUS_CHECKOUT_SOURCE, {
+              type: 'CREATE_PLUS_CHECKOUT',
+              source: 'background',
+              payload: { paymentMethod },
+            });
+          }
+
+          if (result?.error && creationTab.reused) {
+            await addLog(`步骤 4：复用登录标签页返回创建失败，改为新开 ChatGPT 页面：${result.error}`, 'warn');
+            creationTab = {
+              tabId: await openFreshChatGptTabForCheckoutCreate(),
+              reused: false,
+            };
+            tabId = creationTab.tabId;
+            await prepareCheckoutCreationTab(tabId);
+            result = await sendTabMessageUntilStopped(tabId, PLUS_CHECKOUT_SOURCE, {
+              type: 'CREATE_PLUS_CHECKOUT',
+              source: 'background',
+              payload: { paymentMethod },
+            });
+          }
 
           if (result?.error) {
             throw new Error(result.error);
@@ -2103,22 +2418,22 @@ function FindProxyForURL(url, host) {
           || ''
         ).trim();
         if (!targetCheckoutUrl) {
-          throw new Error(`步骤 6：${checkoutModeLabel}未返回可用的订阅链接。`);
+          throw new Error(`步骤 4：${checkoutModeLabel}未返回可用的订阅链接。`);
         }
 
-        await addLog(`步骤 6：${checkoutModeLabel}已创建，正在打开订阅页面...`, 'ok');
+        await addLog(`步骤 4：${checkoutModeLabel}已创建，正在打开订阅页面...`, 'ok');
         await chrome.tabs.update(tabId, { url: targetCheckoutUrl, active: true });
         await waitForTabCompleteUntilStopped(tabId);
         const landedTab = await waitForCheckoutSurface(tabId);
         if (landedTab?.url && landedTab.url !== targetCheckoutUrl) {
-          await addLog(`步骤 6：订阅页已继续跳转到 ${landedTab.url}，准备进入自动填写。`, 'info');
+          await addLog(`步骤 4：订阅页已继续跳转到 ${landedTab.url}，准备进入 Hosted Checkout 填写步骤。`, 'info');
         }
 
         if (checkoutScopedProxySnapshot?.applied) {
           try {
             await maybeRestoreCheckoutConversionProxy(checkoutScopedProxySnapshot);
           } catch (restoreError) {
-            await addLog(`步骤 6：支付转换代理释放失败：${restoreError?.message || String(restoreError || '未知错误')}`, 'warn');
+            await addLog(`步骤 4：支付转换代理释放失败：${restoreError?.message || String(restoreError || '未知错误')}`, 'warn');
           } finally {
             checkoutScopedProxySnapshot = null;
           }
@@ -2128,7 +2443,7 @@ function FindProxyForURL(url, host) {
         await ensureContentScriptReadyOnTabUntilStopped(PLUS_CHECKOUT_SOURCE, tabId, {
           inject: PLUS_CHECKOUT_INJECT_FILES,
           injectSource: PLUS_CHECKOUT_SOURCE,
-          logMessage: '步骤 6：正在等待订阅页面完成加载...',
+          logMessage: '步骤 4：正在等待订阅页面完成加载...',
         });
 
         const finalCheckoutUrl = String((landedTab?.url || targetCheckoutUrl || '')).trim();
@@ -2138,21 +2453,12 @@ function FindProxyForURL(url, host) {
           plusCheckoutCountry: result.country || 'DE',
           plusCheckoutCurrency: result.currency || 'EUR',
           plusReturnUrl: '',
-          plusCheckoutSource: targetCheckoutUrl === String(result?.convertedCheckoutUrl || '').trim()
+          plusCheckoutSource: String(result?.checkoutSource || '').trim() || (targetCheckoutUrl === String(result?.convertedCheckoutUrl || '').trim()
             ? 'converted-chatgpt-checkout'
-            : '',
+            : ''),
         });
 
-        await addLog(`步骤 6：Plus Checkout 页面已就绪（${paymentMethodLabel} / ${result.country || 'DE'} ${result.currency || 'EUR'}），准备继续下一步。`, 'info');
-
-        if (shouldWaitForHostedCheckoutSuccess(state, paymentMethod)) {
-          await addLog('步骤 6：当前 hosted checkout 流程将等待支付成功页出现后，再继续 OAuth 流程。', 'info');
-          startHostedCheckoutAutomation(tabId, {
-            plusCheckoutCountry: result.country || 'DE',
-            plusCheckoutCurrency: result.currency || 'EUR',
-          });
-          return;
-        }
+        await addLog(`步骤 4：Plus Checkout 页面已就绪（${paymentMethodLabel} / ${result.country || 'DE'} ${result.currency || 'EUR'}），准备继续下一步。`, 'info');
 
         await completeNodeFromBackground('plus-checkout-create', {
           plusCheckoutCountry: result.country || 'DE',
@@ -2163,14 +2469,17 @@ function FindProxyForURL(url, host) {
           try {
             await maybeRestoreCheckoutConversionProxy(checkoutScopedProxySnapshot);
           } catch (restoreError) {
-            await addLog(`步骤 6：支付转换代理释放失败：${restoreError?.message || String(restoreError || '未知错误')}`, 'warn');
+            await addLog(`步骤 4：支付转换代理释放失败：${restoreError?.message || String(restoreError || '未知错误')}`, 'warn');
           }
         }
+        restoreActiveLogContext(previousLogContext);
       }
     }
 
     return {
       executePlusCheckoutCreate,
+      executeHostedCheckoutSubmit,
+      executeHostedPayPalPayment,
       fetchHostedCheckoutVerificationCodeManually,
       testCheckoutConversionProxy,
     };

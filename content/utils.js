@@ -276,22 +276,12 @@ function normalizeLogStep(value) {
 
 const DEFAULT_OPENAI_NODE_BY_STEP = Object.freeze({
   1: 'open-chatgpt',
-  2: 'submit-signup-email',
-  3: 'fill-password',
-  4: 'fetch-signup-code',
-  5: 'fill-profile',
-  6: 'wait-registration-success',
-  7: 'oauth-login',
-  8: 'fetch-login-code',
-  9: 'post-login-phone-verification',
-  10: 'confirm-oauth',
-  11: 'fetch-login-code',
-  12: 'post-login-phone-verification',
-  13: 'confirm-oauth',
-  14: 'platform-verify',
-  15: 'platform-verify',
-  16: 'confirm-oauth',
-  17: 'platform-verify',
+  2: 'existing-account-login',
+  3: 'fetch-existing-login-code',
+  4: 'plus-checkout-create',
+  5: 'plus-checkout-billing',
+  6: 'paypal-approve',
+  7: 'plus-activation-success',
 });
 
 function resolveReportNodeId(stepOrNodeId, data = {}) {

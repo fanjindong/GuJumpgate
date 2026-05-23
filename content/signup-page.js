@@ -75,11 +75,8 @@ if (document.documentElement.getAttribute(SIGNUP_PAGE_LISTENER_SENTINEL) !== '1'
 }
 
 const SIGNUP_PAGE_NODE_HANDLERS = Object.freeze({
-  'submit-signup-email': (payload) => step2_clickRegister(payload),
-  'fill-password': (payload) => step3_fillEmailPassword(payload),
-  'fill-profile': (payload) => step5_fillNameBirthday(payload),
-  'oauth-login': (payload) => step6_login(payload),
-  'confirm-oauth': (_payload) => step8_findAndClick(),
+  'existing-account-login': (payload) => step6_login({ ...payload, loginIdentifierType: 'email', accountIdentifier: payload.email }),
+  'fetch-existing-login-code': (payload) => fillVerificationCode(3, payload),
 });
 
 function resolveCommandNodeId(message = {}) {
@@ -88,16 +85,8 @@ function resolveCommandNodeId(message = {}) {
     return directNodeId;
   }
   const visibleStep = Number(message.payload?.visibleStep || message.step) || 0;
-  if (visibleStep === 4) return 'fetch-signup-code';
-  if (visibleStep === 8 || visibleStep === 11) return 'fetch-login-code';
-  if (visibleStep === 9 || visibleStep === 12) return 'post-login-phone-verification';
-  if (visibleStep === 10 || visibleStep === 13) return 'confirm-oauth';
-  if (visibleStep === 16) return 'confirm-oauth';
-  if (visibleStep === 14 || visibleStep === 15 || visibleStep === 17) return 'platform-verify';
-  if (visibleStep === 7) return 'oauth-login';
-  if (visibleStep === 5) return 'fill-profile';
-  if (visibleStep === 3) return 'fill-password';
-  if (visibleStep === 2) return 'submit-signup-email';
+  if (visibleStep === 2) return 'existing-account-login';
+  if (visibleStep === 3) return 'fetch-existing-login-code';
   return '';
 }
 
@@ -4942,19 +4931,19 @@ async function waitForVerificationSubmitOutcome(step, timeout, options = {}) {
       continue;
     }
 
-    if (step === 4) {
+    if (step === 3 || step === 4) {
       const postVerificationState = getStep4PostVerificationState({ ignoreVerificationVisibility: true });
       if (postVerificationState?.state === 'logged_in_home') {
         return {
           success: true,
-          skipProfileStep: true,
+          ...(step === 4 ? { skipProfileStep: true } : {}),
           url: postVerificationState.url || location.href,
         };
       }
-      if (postVerificationState?.state === 'step5') {
+      if (step === 4 && postVerificationState?.state === 'step5') {
         return { success: true };
       }
-      if (purpose === 'signup' && isEmailVerificationPage()) {
+      if (step === 4 && purpose === 'signup' && isEmailVerificationPage()) {
         return {
           success: true,
           emailVerificationRequired: true,
@@ -4980,9 +4969,9 @@ async function waitForVerificationSubmitOutcome(step, timeout, options = {}) {
     await sleep(150);
   }
 
-  if (step === 4) {
+  if (step === 3 || step === 4) {
     const signupRetryState = getCurrentAuthRetryPageState('signup');
-    if (signupRetryState?.userAlreadyExistsBlocked) {
+    if (step === 4 && signupRetryState?.userAlreadyExistsBlocked) {
       throw createSignupUserAlreadyExistsError();
     }
 
@@ -4990,14 +4979,14 @@ async function waitForVerificationSubmitOutcome(step, timeout, options = {}) {
     if (postVerificationState?.state === 'logged_in_home') {
       return {
         success: true,
-        skipProfileStep: true,
+        ...(step === 4 ? { skipProfileStep: true } : {}),
         url: postVerificationState.url || location.href,
       };
     }
-    if (postVerificationState?.state === 'step5') {
+    if (step === 4 && postVerificationState?.state === 'step5') {
       return { success: true };
     }
-    if (purpose === 'signup' && isEmailVerificationPage()) {
+    if (step === 4 && purpose === 'signup' && isEmailVerificationPage()) {
       return {
         success: true,
         emailVerificationRequired: true,
@@ -5118,7 +5107,7 @@ async function fillVerificationCode(step, payload) {
         return typeof gate === 'function' ? gate(metadata, operation) : operation();
       };
 
-  if (step === 4) {
+  if (step === 3 || step === 4) {
     const postVerificationState = getStep4PostVerificationState();
     if (postVerificationState?.state === 'logged_in_home') {
       if (typeof clearStep405RecoveryCount === 'function') clearStep405RecoveryCount(step);
@@ -5127,11 +5116,11 @@ async function fillVerificationCode(step, payload) {
         success: true,
         assumed: true,
         alreadyAdvanced: true,
-        skipProfileStep: true,
+        ...(step === 4 ? { skipProfileStep: true } : {}),
         url: postVerificationState.url || location.href,
       };
     }
-    if (postVerificationState?.state === 'step5') {
+    if (step === 4 && postVerificationState?.state === 'step5') {
       if (typeof clearStep405RecoveryCount === 'function') clearStep405RecoveryCount(step);
       log(`步骤 ${step}：检测到页面已进入下一阶段，本次验证码提交按成功处理。`, 'ok');
       return { success: true, assumed: true, alreadyAdvanced: true };

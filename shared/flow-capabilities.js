@@ -15,7 +15,7 @@
     supportsEmailSignup: true,
     supportsPhoneSignup: false,
     supportsPhoneVerificationSettings: false,
-    supportsPlusMode: false,
+    supportsPlusMode: true,
     supportsContributionMode: false,
     supportsPlatformBinding: [],
     supportsLuckmail: false,
@@ -27,19 +27,19 @@
   const FLOW_CAPABILITIES = Object.freeze({
     openai: Object.freeze({
       ...DEFAULT_FLOW_CAPABILITIES,
-      supportsPhoneSignup: true,
-      supportsPhoneVerificationSettings: true,
+      supportsPhoneSignup: false,
+      supportsPhoneVerificationSettings: false,
       supportsPlusMode: true,
-      supportsContributionMode: true,
-      supportsPlatformBinding: ['local-cpa-json', LOCAL_CPA_JSON_NO_RT_PANEL_MODE, 'cpa', 'sub2api', 'codex2api'],
-      supportsLuckmail: true,
-      supportsOauthTimeoutBudget: true,
+      supportsContributionMode: false,
+      supportsPlatformBinding: ['local-cpa-json'],
+      supportsLuckmail: false,
+      supportsOauthTimeoutBudget: false,
       stepDefinitionMode: 'openai-dynamic',
     }),
   });
 
   const DEFAULT_PANEL_CAPABILITIES = Object.freeze({
-    supportsPhoneSignup: true,
+    supportsPhoneSignup: false,
     requiresPhoneSignupWarning: false,
     supportedPlusAccountAccessStrategies: Object.freeze([PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH]),
   });
@@ -55,7 +55,7 @@
 
   const PANEL_CAPABILITIES = Object.freeze({
     cpa: Object.freeze({
-      supportsPhoneSignup: true,
+      supportsPhoneSignup: false,
       requiresPhoneSignupWarning: true,
       supportedPlusAccountAccessStrategies: Object.freeze([
         PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
@@ -63,15 +63,15 @@
       ]),
     }),
     'local-cpa-json': Object.freeze({
-      supportsPhoneSignup: true,
+      supportsPhoneSignup: false,
       requiresPhoneSignupWarning: false,
     }),
     [LOCAL_CPA_JSON_NO_RT_PANEL_MODE]: Object.freeze({
-      supportsPhoneSignup: true,
+      supportsPhoneSignup: false,
       requiresPhoneSignupWarning: false,
     }),
     sub2api: Object.freeze({
-      supportsPhoneSignup: true,
+      supportsPhoneSignup: false,
       requiresPhoneSignupWarning: false,
       supportedPlusAccountAccessStrategies: Object.freeze([
         PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
@@ -79,7 +79,7 @@
       ]),
     }),
     codex2api: Object.freeze({
-      supportsPhoneSignup: true,
+      supportsPhoneSignup: false,
       requiresPhoneSignupWarning: false,
     }),
   });
@@ -238,20 +238,16 @@
       const panelState = getPanelCapabilities(effectivePanelMode);
       const runtimeLocks = {
         autoRunLocked: Boolean(options?.autoRunLocked ?? state?.autoRunLocked),
-        contributionMode: flowState.supportsContributionMode && Boolean(state?.contributionMode),
-        phoneVerificationEnabled: flowState.supportsPhoneVerificationSettings && Boolean(state?.phoneVerificationEnabled),
-        plusModeEnabled: flowState.supportsPlusMode && Boolean(state?.plusModeEnabled),
+        contributionMode: false,
+        phoneVerificationEnabled: false,
+        plusModeEnabled: true,
         settingsMenuLocked: Boolean(options?.settingsMenuLocked ?? state?.settingsMenuLocked),
       };
       const effectiveSignupMethods = [];
       if (flowState.supportsEmailSignup !== false) {
         effectiveSignupMethods.push(SIGNUP_METHOD_EMAIL);
       }
-      const canSelectPhoneSignup = Boolean(flowState.supportsPhoneSignup)
-        && Boolean(panelState.supportsPhoneSignup)
-        && runtimeLocks.phoneVerificationEnabled
-        && !runtimeLocks.plusModeEnabled
-        && !runtimeLocks.contributionMode;
+      const canSelectPhoneSignup = false;
       if (canSelectPhoneSignup) {
         effectiveSignupMethods.push(SIGNUP_METHOD_PHONE);
       }
@@ -261,11 +257,9 @@
       const requestedSignupMethod = normalizeSignupMethod(
         options?.signupMethod ?? state?.signupMethod
       );
-      const effectiveSignupMethod = requestedSignupMethod === SIGNUP_METHOD_PHONE && canSelectPhoneSignup
-        ? SIGNUP_METHOD_PHONE
-        : (effectiveSignupMethods.includes(SIGNUP_METHOD_EMAIL)
-          ? SIGNUP_METHOD_EMAIL
-          : effectiveSignupMethods[0]);
+      const effectiveSignupMethod = effectiveSignupMethods.includes(SIGNUP_METHOD_EMAIL)
+        ? SIGNUP_METHOD_EMAIL
+        : effectiveSignupMethods[0];
       const requestedPlusAccountAccessStrategy = normalizePlusAccountAccessStrategyForPanel(
         options?.plusAccountAccessStrategy ?? state?.plusAccountAccessStrategy,
         effectivePanelMode
@@ -397,13 +391,6 @@
         });
       }
 
-      if (
-        capabilityState.requestedSignupMethod === SIGNUP_METHOD_PHONE
-        && capabilityState.effectiveSignupMethod !== SIGNUP_METHOD_PHONE
-      ) {
-        errors.push(buildPhoneSignupValidationError(capabilityState));
-      }
-
       return {
         ok: errors.length === 0,
         errors,
@@ -439,12 +426,8 @@
         });
       }
 
-      if (changedKeySet.has('plusModeEnabled') && Boolean(state?.plusModeEnabled) && !flowState.supportsPlusMode) {
-        normalizedUpdates.plusModeEnabled = false;
-        errors.push({
-          code: 'plus_mode_unsupported',
-          message: '当前 flow 不支持 Plus 模式。',
-        });
+      if (changedKeySet.has('plusModeEnabled') && state?.plusModeEnabled !== true) {
+        normalizedUpdates.plusModeEnabled = true;
       }
 
       if (changedKeySet.has('contributionMode') && Boolean(state?.contributionMode) && !flowState.supportsContributionMode) {
@@ -458,13 +441,14 @@
       if (
         changedKeySet.has('phoneVerificationEnabled')
         && Boolean(state?.phoneVerificationEnabled)
-        && !flowState.supportsPhoneVerificationSettings
       ) {
         normalizedUpdates.phoneVerificationEnabled = false;
-        errors.push({
-          code: 'phone_verification_unsupported',
-          message: '当前 flow 不支持接码配置。',
-        });
+        if (!flowState.supportsPhoneVerificationSettings) {
+          errors.push({
+            code: 'phone_verification_unsupported',
+            message: '已有账户 Plus 流程不支持接码配置。',
+          });
+        }
       }
 
       if (

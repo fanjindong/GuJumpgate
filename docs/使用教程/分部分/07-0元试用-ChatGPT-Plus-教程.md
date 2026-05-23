@@ -1,224 +1,132 @@
-# 第七部分：0元试用 ChatGPT Plus 教程
+# 第七部分：已有账户 Plus 流程说明
 
 ## 部分信息
 
-- `section_slug`: `chatgpt-plus-free-trial`
-- `适用主题`: `ChatGPT Plus`、0元试用、支付链接提取脚本、PayPal 支付、地址推荐填写
+- `section_slug`: `existing-account-chatgpt-plus`
+- `适用主题`: `已有账户`、`ChatGPT Plus`、`PayPal Hosted`、`GoPay`、`GPC`
 - `维护方式`: `直接更新本文件`
 
 ## 适用场景
 
-- 在已登录 ChatGPT 的状态下，想要快速生成 Plus 支付链接并尝试 0 元试用订阅。
+- 已经有一个可登录的 ChatGPT 账号。
+- 想通过 GuJumpgate 自动完成 Plus 订阅链路。
+- 需要了解侧边栏中 PayPal Hosted、GoPay、GPC 三种支付方式怎么配置。
 
 ## 准备内容
 
-- 已有一个登录状态的 ChatGPT 账户。
-- 一个可用的 PayPal 账户（参考第六部分进行注册和绑卡）。
-- 能够接收生成的账单地址的真实地址或虚拟地址。
-- Chrome 浏览器（推荐使用地址补全功能）。
+1. 一个已有 ChatGPT 账号。
+2. 账号邮箱、密码和验证码接口。
+3. 可用的支付方式：
+   - PayPal Hosted
+   - GoPay
+   - GPC
+4. 已安装并启用无痕权限的 GuJumpgate 扩展。
 
-## 操作步骤
+## 账户 JSON
 
-### 【方案一】：通过 PayPal 订阅
+侧边栏第一项是 `账户 JSON`。格式如下：
 
-如果你选择 PayPal 支付，可使用脚本快速生成支持 PayPal 的支付短链并操作，具体如下：
-
-#### 第一步：进入 ChatGPT 并打开开发者工具
-
-在已登录 ChatGPT 的页面上，按 `F12` 打开浏览器开发者工具。
-点击 `Console`（控制台）标签进入命令行界面。
-
-#### 第二步：允许粘贴脚本
-
-在控制台中输入 `allow pasting` 并回车。
-浏览器将允许你粘贴多行脚本代码。
-
-#### 第三步：粘贴并执行脚本
-
-复制下方脚本代码，粘贴到控制台，然后回车执行。
-
-```javascript
-(async function(){
-    try {
-        const t = await (await fetch("/api/auth/session")).json();
-        if(!t.accessToken){
-            alert("请先登录 ChatGPT！");
-            return;
-        }
-
-        // 核心1：强制使用触发 PayPal 的欧洲区参数 (DE 德国 / EUR 欧元)
-        const payload = {
-            entry_point: "all_plans_pricing_modal",
-            plan_name: "chatgptplusplan", // Plus 的套餐名
-            billing_details: {
-                country: "DE", // 必须是 DE 或 FR 才能在后续页面使用 PayPal
-                currency: "EUR"
-            },
-            checkout_ui_mode: "custom",
-            promo_campaign: {
-                promo_campaign_id: "plus-1-month-free", // Plus 对应优惠码
-                is_coupon_from_query_param: false
-            }
-        };
-
-        const response = await fetch("https://chatgpt.com/backend-api/payments/checkout", {
-            method: "POST",
-            headers: {
-                "Authorization": "Bearer " + t.accessToken,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(payload)
-        });
-
-        const data = await response.json();
-        
-        if(data.checkout_session_id) {
-            // 核心2：拼接 Plus 的专属支付短链
-            // 如果 openai_ie 报错，可以直接把 /openai_ie 删掉，变成 "https://chatgpt.com/checkout/" + data.checkout_session_id
-            const shortLink = "https://chatgpt.com/checkout/openai_ie/" + data.checkout_session_id;
-            
-            // 弹窗让你复制这个带有 PayPal 的短链
-            prompt("提取成功！这是你的 Plus 支付短链（复制保留）：", shortLink);
-            
-            // 自动跳转到该短链
-            window.location.href = shortLink;
-        } else {
-            console.error(data);
-            alert("提取失败：" + (data.detail || JSON.stringify(data)));
-        }
-    } catch(e) {
-        alert("发生异常：" + e);
-    }
-})();
+```json
+{
+  "email": "name@example.com",
+  "password": "your-password",
+  "mailbox_url": "https://example.com/latest-code"
+}
 ```
 
-#### 第四步：复制支付短链
+字段说明：
 
-脚本执行后会弹出一个对话框，显示你的 Plus 支付短链。
-点击"确定"按钮，页面会自动跳转到支付页面。
-（可以复制这个链接备用，以防需要重新进入。）
+- `email`：已有 ChatGPT 账号邮箱。
+- `password`：已有账号密码。
+- `mailbox_url`：验证码接口地址。
 
-#### 第五步：选择 PayPal 支付
+验证码接口返回中只要能解析到下面任意一种字段即可：
 
-页面加载完成后，你会看到 ChatGPT Plus 的 checkout 页面，标题通常为"开始免费试用 Plus"。
-在左侧付款方式中选择 `PayPal`。
+```json
+{ "code": "123456" }
+```
 
-#### 第六步：填写账单信息 - 选择国家
+```json
+{ "data": { "code": "123456" } }
+```
 
-页面右侧会显示账单地址表单。
-"国家或地区" 字段会根据你当前的地址预填（通常是德国或法国）。
-如果页面显示的不是你期望的国家，可以点击下拉框更改（建议保持德国或法国，以确保支付流程顺利）。
+```json
+{ "result": { "code": "123456" } }
+```
 
-#### 第七步：填写账单信息 - 输入完整名字
+## PayPal Hosted 配置
 
-在 "全名" 字段中输入完整的英文名字（例如 `John Smith`）。
+PayPal Hosted 是当前默认推荐链路。
 
-#### 第八步：生成和填写地址
+需要关注的配置：
 
-在 "地址第 1 行" 字段中开始输入。
-输入城市名、州名或街道名（例如输入 `Berlin` 或 `New York`）。
-页面会弹出 Google 地址推荐列表。
-从推荐列表中选择一个地址项（建议选择第二项）。
-页面会自动回填"城市"、"州"、"邮编"等字段。
+- `云端支付转换`：推荐开启。
+- `支付转换代理`：只有关闭云端支付转换后才会生效。
+- `验证码接口`：PayPal Hosted 页面出现验证码弹窗时使用。
+- `弹窗延迟`：检测到验证码弹窗后，等待多少秒再获取验证码。
+- `PayPal 电话`：用于 Hosted Checkout 中的电话字段。
+- `Hosted 接码池`：批量导入号码和验证码接口时使用。
 
-#### 第九步：使用虚拟地址生成工具（可选）
+默认步骤：
 
-如果地址推荐没有出现或推荐的地址不满足需求，可以使用 [https://www.meiguodizhi.com/](https://www.meiguodizhi.com/) 生成虚拟地址。
-在该网站输入城市名或随机字母获取推荐地址，复制完整地址后粘贴到表单对应字段。
+1. 打开 ChatGPT 官网。
+2. 登录已有账户。
+3. 获取登录验证码。
+4. 创建 Plus Checkout。
+5. 填写 Hosted Checkout。
+6. 处理 PayPal Hosted 支付。
+7. Plus 开通成功。
 
-#### 第十步：完成地址填写并点击订阅
+## GoPay 配置
 
-确认所有必填字段已填完（全名、地址、城市、州、邮编）。
-在右侧点击 "订阅" 按钮。
-页面会跳转到 PayPal 登录界面。
+选择 `GoPay` 后，需要填写：
 
-#### 第十一步：PayPal 登录
+- `GoPay 区号`
+- `GoPay 手机`
+- `GoPay 验证码`
+- `GoPay PIN`
 
-在 PayPal 登录页输入 PayPal 账户邮箱，然后输入 PayPal 账户密码。
-点击 "登录" 按钮。
+如果运行时需要手动确认，侧边栏会弹出确认入口。真实 OTP 和 PIN 只应通过侧边栏输入，不要写入文档或代码。
 
-#### 第十二步：处理相关提示与弹窗
+## GPC 配置
 
-- 如果出现 "要在无痕模式以外保存此通行密钥吗？" 的弹窗，点击 "取消"。
-- 如果出现 "下次登录更快捷" 或其他 PayPal 通行密钥引导弹窗，点击右上角的关闭图标。
+选择 `GPC` 后，需要填写：
 
-#### 第十三步：同意并继续
+- `GPC API`
+- `GPC API Key`
+- `GPC 模式`
+- `GPC 手机`
+- `GPC OTP`
+- `本地短信 helper`
+- `GPC PIN`
 
-页面显示 "只需一次设置，结账更快捷。" 以及向 `OpenAI Ireland Limited` 付款的摘要。
-点击 "同意并继续" 按钮。
-等待页面跳转并加载完成。
+自动模式由远端任务处理手机号和验证码；手动模式需要你按侧边栏提示补充 OTP 或 PIN。
 
-#### 第十四步：订阅成功
+## 开始运行
 
-页面会回跳到 ChatGPT 或 OpenAI 的订阅确认页面。
-此时 Plus 的0元试用订阅已成功完成。
-你现在可以使用 ChatGPT Plus 的所有功能，试用期结束后会自动按月续订。
+1. 填写账户 JSON。
+2. 选择 Plus 支付方式。
+3. 补齐对应支付方式的配置。
+4. 点击保存。
+5. 设置运行次数。
+6. 点击 `自动`。
 
----
-
-### 【方案二】：通过 GoPay 订阅
-
-如果你需要通过印度尼西亚的 GoPay 钱包（配合国内手机号），可以直接在常规入口更改国家后购买：
-
-#### 第一步：注册 WhatsApp
-
-下载并打开 `WhatsApp`，将网络切换至台湾节点（别的应该也可以注册，如果注册不成功就换，自行尝试），使用你的国内手机号（`+86`）完成注册。
-
-#### 第二步：注册 GoPay 并设置 PIN 码
-
-1. 下载并打开 `GoPay` App，使用**与 WhatsApp 相同的国内手机号**进行注册。
-2. 验证码会发送至你的 WhatsApp，前往 WhatsApp 获取并填入以完成注册。
-3. 注册成功后，点击 `Profile`（个人资料），进入 `Account`（账户）设置 `PIN` 码。必须设置 PIN 码，否则后续即使有余额也无法支付。
-
-#### 第三步：使用扩展运行账号并停止
-
-1. 随意使用一个节点打开浏览器，配置好扩展（建议使用网易邮箱或自定义域名邮箱，iCloud 邮箱可能无法享受相关优惠）。
-2. 让扩展运行到**第五步结束**，然后停止自动运行。
-3. 如果页面有弹窗或新手引导，请先手动处理关闭。
-
-#### 第四步：进入订阅页面更改国家
-
-1. 在 ChatGPT 对话页面的最上方，点击 `免费试用` 按钮进入订阅页面。
-2. 此时节点随意（无需和之前相同）。在支付界面的右下角，将国家/地区更改为**印度尼西亚**（`Indonesia`）。
-
-#### 第五步：填写地址与 GoPay 支付
-
-1. 付款方式选择 `GoPay`。
-2. 填写账单地址：需要填写与你当前节点相匹配的地址。
-   - 如果使用谷歌浏览器，可以随便输入几个字母利用自动补全功能。
-   - 也可以前往 [美国地址生成器](https://www.meiguodizhi.com/) 生成一个对应的地址填入。
-3. 点击 `订阅`。
-4. 在弹出的支付页面中，输入你刚才注册 GoPay 的手机号（带 `+86`）。
-5. 按照后续提示流程完成支付即可。
+运行中可通过日志区查看当前节点、错误原因和是否进入重试。
 
 ## 常见问题
 
-### 为什么脚本执行报错 "请先登录 ChatGPT！"？
+### 为什么点击自动前提示账户 JSON 无效？
 
-请确认你当前已登录 ChatGPT 账户。可以退出重新登录后再尝试运行脚本。
+通常是缺少 `email`、`password` 或 `mailbox_url`，也可能是 `mailbox_url` 不是有效的 `http` / `https` 地址。
 
-### 脚本执行返回错误信息怎么办？
+### 为什么验证码接口返回了内容但扩展识别不到？
 
-先检查网络连接是否正常。如果多次尝试仍然失败，可能是当前账户不符合 0 元试用条件，请稍后再试。
+请确认返回里有 `code`、`data.code` 或 `result.code`，且验证码是 4 到 8 位数字。
 
-### `/openai_ie` 部分出现 404 错误怎么办？
+### 云端支付转换和本地支付转换代理能同时生效吗？
 
-如果短链中的 `/openai_ie/` 无法访问，手动修改短链，删除 `/openai_ie/` 即可（变为 `https://chatgpt.com/checkout/{checkout_session_id}`），然后再访问。
+不能。开启云端支付转换后，本地支付转换代理会自动停用。
 
-### 支付页面没有显示 PayPal 选项？
+### 停止后为什么没有继续跑旧任务？
 
-这可能是因为脚本中的 `country` 参数不是 `DE`（德国）或 `FR`（法国）。重新运行脚本，确保脚本里国家参数为 DE 或 FR。
-
-### 地址推荐没有出现怎么办？
-
-在 "地址第 1 行" 中输入字母后，稍等 1-2 秒，输入框下方应该会出现推荐列表。如果一直没出现，可清空后重新输入，或直接跳到第九步借助虚拟地址生成网站生成地址填入。
-
-### PayPal 登录后页面无法继续跳转？
-
-稍等片刻让页面加载完毕。如果长时间未响应，检查浏览器是否有弹窗被拦截/隐藏，或者尝试刷新页面。
-
-## 注意事项
-
-- 执行脚本前必须处于已登录 ChatGPT 的状态。
-- PayPal 必须要先绑定好有效的借记卡/信用卡。
-- 试用期结束后会自动按月扣费续订。如果不打算长期使用，记得在后台取消连续订阅。
+当前自动运行会绑定会话标识。用户停止后，旧倒计时、旧恢复入口和旧重试链路都不会重新拉起已经停止的流程。

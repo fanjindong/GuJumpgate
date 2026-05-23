@@ -7,6 +7,7 @@
       appendAccountRunRecord,
       batchUpdateLuckmailPurchases,
       buildLocalhostCleanupPrefix,
+      buildExistingAccountUpdatesFromSettings,
       buildLuckmailSessionSettingsPayload,
       buildPersistentSettingsPayload,
       broadcastDataUpdate,
@@ -178,6 +179,7 @@
       setNodeStatus,
       skipAutoRunCountdown,
       skipNode,
+      sanitizeDataUpdatePayloadForBroadcast = (payload) => payload,
       startContributionFlow,
       startAutoRunLoop,
       deleteMail2925Account,
@@ -227,6 +229,25 @@
       preserveKeyFromState(updates, currentState, 'phonePreferredActivation');
     }
 
+    async function syncExistingAccountSettingsForStart(payload = {}) {
+      if (!Object.prototype.hasOwnProperty.call(payload || {}, 'existingAccountJson')) {
+        return await getState();
+      }
+      if (typeof buildExistingAccountUpdatesFromSettings !== 'function') {
+        throw new Error('已有账户设置能力尚未接入。');
+      }
+      const updates = buildPersistentSettingsPayload({
+        existingAccountJson: payload.existingAccountJson,
+      });
+      const existingAccountUpdates = buildExistingAccountUpdatesFromSettings(updates);
+      await setPersistentSettings(updates);
+      await setState({
+        ...updates,
+        ...existingAccountUpdates,
+      });
+      return await getState();
+    }
+
     async function appendManualAccountRunRecordIfNeeded(status, stateOverride = null, reason = '') {
       if (typeof appendAccountRunRecord !== 'function') {
         return null;
@@ -259,22 +280,12 @@
 
     const DEFAULT_OPENAI_NODE_BY_STEP = Object.freeze({
       1: 'open-chatgpt',
-      2: 'submit-signup-email',
-      3: 'fill-password',
-      4: 'fetch-signup-code',
-      5: 'fill-profile',
-      6: 'wait-registration-success',
-      7: 'oauth-login',
-      8: 'fetch-login-code',
-      9: 'post-login-phone-verification',
-      10: 'confirm-oauth',
-      11: 'fetch-login-code',
-      12: 'post-login-phone-verification',
-      13: 'confirm-oauth',
-      14: 'platform-verify',
-      15: 'platform-verify',
-      16: 'confirm-oauth',
-      17: 'platform-verify',
+      2: 'existing-account-login',
+      3: 'fetch-existing-login-code',
+      4: 'plus-checkout-create',
+      5: 'plus-checkout-billing',
+      6: 'paypal-approve',
+      7: 'plus-activation-success',
     });
 
     function getStepKeyForState(step, state = {}) {
@@ -1284,7 +1295,7 @@
               });
             }
           }
-          const state = await getState();
+          const state = await syncExistingAccountSettingsForStart(message.payload || {});
           const autoRunStartValidation = validateAutoRunStart(state, { state });
           if (autoRunStartValidation?.ok === false) {
             throw new Error(autoRunStartValidation.errors?.[0]?.message || '当前设置不支持启动自动流程。');
@@ -1316,7 +1327,7 @@
               });
             }
           }
-          const state = await getState();
+          const state = await syncExistingAccountSettingsForStart(message.payload || {});
           const autoRunStartValidation = validateAutoRunStart(state, { state });
           if (autoRunStartValidation?.ok === false) {
             throw new Error(autoRunStartValidation.errors?.[0]?.message || '当前设置不支持启动自动流程。');
@@ -1395,6 +1406,13 @@
           const currentState = await getState();
           const updates = buildPersistentSettingsPayload(message.payload || {});
           const sessionUpdates = buildLuckmailSessionSettingsPayload(message.payload || {});
+          let existingAccountUpdates = {};
+          if (Object.prototype.hasOwnProperty.call(updates, 'existingAccountJson')) {
+            if (typeof buildExistingAccountUpdatesFromSettings !== 'function') {
+              throw new Error('已有账户设置能力尚未接入。');
+            }
+            existingAccountUpdates = buildExistingAccountUpdatesFromSettings(updates);
+          }
           const modeValidation = validateModeSwitch({
             ...currentState,
             ...updates,
@@ -1445,6 +1463,7 @@
           const stateUpdates = {
             ...updates,
             ...sessionUpdates,
+            ...existingAccountUpdates,
             ...(oauthFlowTimeoutDisabled ? {
               oauthFlowDeadlineAt: null,
               oauthFlowDeadlineSourceUrl: null,
@@ -1510,7 +1529,7 @@
             await setContributionMode(true);
           }
           if (Object.keys(stateUpdates).length > 0 && typeof broadcastDataUpdate === 'function') {
-            broadcastDataUpdate(stateUpdates);
+            broadcastDataUpdate(sanitizeDataUpdatePayloadForBroadcast(stateUpdates));
           }
           if (modeChanged) {
             const selectedPlusPaymentMethod = getPlusPaymentMethodLabel(

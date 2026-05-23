@@ -3,6 +3,7 @@
 importScripts(
   'shared/source-registry.js',
   'shared/flow-capabilities.js',
+  'shared/existing-account.js',
   'shared/session-to-json-converter.js',
   'background/local-cli-proxy-api.js',
   'managed-alias-utils.js',
@@ -40,23 +41,17 @@ importScripts(
   'data/step-definitions.js',
   'data/address-sources.js',
   'background/steps/open-chatgpt.js',
-  'background/steps/submit-signup-email.js',
-  'background/steps/fill-password.js',
-  'background/steps/fetch-signup-code.js',
-  'background/steps/fill-profile.js',
-  'background/steps/wait-registration-success.js',
   'background/steps/create-plus-checkout.js',
   'background/steps/fill-plus-checkout.js',
   'background/steps/gopay-manual-confirm.js',
   'background/steps/paypal-approve.js',
   'background/steps/gopay-approve.js',
   'background/steps/plus-return-confirm.js',
+  'background/steps/plus-activation-success.js',
   'background/steps/sub2api-session-import.js',
   'background/steps/cpa-session-import.js',
-  'background/steps/oauth-login.js',
-  'background/steps/fetch-login-code.js',
-  'background/steps/confirm-oauth.js',
-  'background/steps/platform-verify.js',
+  'background/steps/existing-account-login.js',
+  'background/steps/fetch-existing-login-code.js',
   'data/names.js',
   'hotmail-utils.js',
   'microsoft-email.js',
@@ -477,8 +472,8 @@ const SUB2API_STEP9_RESPONSE_TIMEOUT_MS = 120000;
 const DEFAULT_SUB2API_URL = '';
 const DEFAULT_CODEX2API_URL = 'http://localhost:8080/admin/accounts';
 const DEFAULT_GPC_HELPER_API_URL = 'https://your-gpc-helper-domain.example';
-const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL = 'https://gujumpgate.zg.fyi/api/checkout';
-const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY = '2KwVxE6f0ABH002JLkoQJ9ReRf4_d01y';
+const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL = 'https://payurl.ark2.cn/api/checkout';
+const BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY = '';
 const DEFAULT_SUB2API_GROUP_NAME = 'codex';
 const DEFAULT_SUB2API_PROXY_NAME = '';
 const DEFAULT_SUB2API_ACCOUNT_PRIORITY = 1;
@@ -984,11 +979,12 @@ const PERSISTED_SETTING_DEFAULTS = {
   codex2apiUrl: DEFAULT_CODEX2API_URL,
   codex2apiAdminKey: '',
   customPassword: '',
+  existingAccountJson: '',
   plusModeEnabled: true,
   plusPaymentMethod: DEFAULT_PLUS_PAYMENT_METHOD,
   plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
   plusHostedCheckoutOauthDelaySeconds: 10,
-  plusCheckoutCloudConversionEnabled: false,
+  plusCheckoutCloudConversionEnabled: true,
   plusCheckoutCloudConversionApiUrl: BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL,
   plusCheckoutCloudConversionApiKey: BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY,
   plusCheckoutConversionProxyUrl: '',
@@ -1161,6 +1157,10 @@ const DEFAULT_STATE = {
   ...CONTRIBUTION_RUNTIME_DEFAULTS,
   oauthUrl: null, // 运行时抓取到的 OAuth 地址，不要手动预填。
   resolvedSignupMethod: null, // 当前自动轮次冻结后的实际注册方式。
+  existingAccount: null,
+  plusActivationStatus: 'pending',
+  plusActivatedAt: 0,
+  plusActivationMessage: '',
   accountIdentifierType: null,
   accountIdentifier: '',
   registrationEmailState: { ...DEFAULT_REGISTRATION_EMAIL_STATE },
@@ -2971,6 +2971,8 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '').trim();
     case 'customPassword':
       return String(value || '');
+    case 'existingAccountJson':
+      return String(value || '').trim();
     case 'signupMethod':
       return normalizeSignupMethod(value);
     case 'plusPaymentMethod':
@@ -3519,6 +3521,25 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
   return payload;
 }
 
+function buildExistingAccountUpdatesFromSettings(settings = {}) {
+  const rawJson = String(settings.existingAccountJson || '').trim();
+  if (!rawJson) {
+    return {
+      existingAccount: null,
+      email: null,
+      password: null,
+      accountIdentifierType: null,
+      accountIdentifier: '',
+    };
+  }
+  if (!self.MultiPageExistingAccount?.parseExistingAccountJson
+    || !self.MultiPageExistingAccount?.buildExistingAccountState) {
+    throw new Error('已有账户解析能力尚未加载。');
+  }
+  const account = self.MultiPageExistingAccount.parseExistingAccountJson(rawJson);
+  return self.MultiPageExistingAccount.buildExistingAccountState(account);
+}
+
 async function getPersistedSettings() {
   const stored = await chrome.storage.local.get([
     ...PERSISTED_SETTING_KEYS,
@@ -3583,7 +3604,7 @@ async function initializeSessionStorageAccess() {
 }
 
 async function setState(updates) {
-  console.log(LOG_PREFIX, 'storage.set:', JSON.stringify(updates).slice(0, 200));
+  console.log(LOG_PREFIX, 'storage.set:', JSON.stringify(sanitizeStateUpdatesForLog(updates)).slice(0, 200));
   if (Object.keys(updates || {}).length > 0) {
     const currentSessionState = await chrome.storage.session.get(null);
     const sessionUpdates = buildStatePatchWithRuntimeState({
@@ -3616,6 +3637,43 @@ async function setState(updates) {
       });
     }
   }
+}
+
+function sanitizeStateUpdatesForLog(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeStateUpdatesForLog(item));
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    if (key === 'password' || key === 'existingAccountJson') {
+      return [key, item ? '***' : item];
+    }
+    if (key === 'existingAccount' && item && typeof item === 'object' && !Array.isArray(item)) {
+      return [key, {
+        ...item,
+        password: item.password ? '***' : item.password,
+      }];
+    }
+    return [key, sanitizeStateUpdatesForLog(item)];
+  }));
+}
+
+function sanitizeDataUpdatePayloadForBroadcast(payload = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+  const sanitized = { ...payload };
+  delete sanitized.existingAccountJson;
+  delete sanitized.password;
+  if (sanitized.existingAccount && typeof sanitized.existingAccount === 'object' && !Array.isArray(sanitized.existingAccount)) {
+    sanitized.existingAccount = {
+      ...sanitized.existingAccount,
+      password: '',
+    };
+  }
+  return sanitized;
 }
 
 function normalizeLocalCpaJsonPluginDir(rawValue = '') {
@@ -3700,22 +3758,27 @@ async function importSettingsBundle(configBundle) {
     });
   }
 
+  const existingAccountUpdates = buildExistingAccountUpdatesFromSettings(importedSettings);
   await setPersistentSettings(importedSettings);
 
   const sessionUpdates = {
     ...importedSettings,
+    ...existingAccountUpdates,
     currentHotmailAccountId: null,
-    email: null,
     registrationEmailState: { ...DEFAULT_REGISTRATION_EMAIL_STATE },
   };
 
   await setState(sessionUpdates);
-  broadcastDataUpdate({
+  broadcastDataUpdate(sanitizeDataUpdatePayloadForBroadcast({
     ...importedSettings,
+    existingAccount: sessionUpdates.existingAccount,
+    accountIdentifierType: sessionUpdates.accountIdentifierType,
+    accountIdentifier: sessionUpdates.accountIdentifier,
+    password: sessionUpdates.password,
     currentHotmailAccountId: null,
     ...(sessionUpdates.email !== undefined ? { email: sessionUpdates.email } : {}),
     registrationEmailState: sessionUpdates.registrationEmailState,
-  });
+  }));
 
   return getState();
 }
@@ -5351,100 +5414,6 @@ async function verifyHotmailAccount(accountId) {
     account: result.account,
     messageCount: result.mailboxResults[0]?.count || 0,
   };
-}
-
-async function ensureHotmailMailboxReadyForAutoRunRound(options = {}) {
-  const {
-    targetRun = 0,
-    totalRuns = 0,
-    attemptRun = 1,
-  } = options;
-  const state = await getState();
-  if (!isHotmailProvider(state)) {
-    return null;
-  }
-
-  const buildRoundLabel = () => {
-    if (targetRun > 0 && totalRuns > 0) {
-      return `第 ${targetRun}/${totalRuns} 轮`;
-    }
-    return '当前轮';
-  };
-  const exhaustedAccountIds = new Set();
-  let preferredAccountId = state.currentHotmailAccountId || null;
-  let lastError = null;
-
-  while (true) {
-    throwIfStopped();
-    const latestState = await getState();
-    const latestAccounts = normalizeHotmailAccounts(latestState.hotmailAccounts);
-    const remainingAuthorizedAccounts = latestAccounts
-      .filter((candidate) => isAuthorizedHotmailRunAccount(candidate) && !exhaustedAccountIds.has(candidate.id));
-    const remainingPendingAccounts = latestAccounts
-      .filter((candidate) => isPendingHotmailVerificationCandidate(candidate) && !exhaustedAccountIds.has(candidate.id));
-    if (!remainingAuthorizedAccounts.length && !remainingPendingAccounts.length) {
-      if (lastError) {
-        throw new Error(`自动运行${buildRoundLabel()}开始前未找到可通过校验的 Hotmail 账号：${lastError.message}`);
-      }
-      throw new Error('没有可用的 Hotmail 账号。请先在侧边栏添加至少一个带刷新令牌（refresh token）的账号。');
-    }
-
-    let account = null;
-    if (remainingAuthorizedAccounts.length) {
-      account = await ensureHotmailAccountForFlow({
-        allowAllocate: true,
-        markUsed: false,
-        preferredAccountId,
-        excludeIds: [...exhaustedAccountIds],
-      });
-    } else {
-      const pendingAccount = pickPendingHotmailAccountForVerification(latestAccounts, {
-        preferredAccountId,
-        excludeIds: [...exhaustedAccountIds],
-      });
-      if (!pendingAccount) {
-        throw new Error('没有可用的 Hotmail 账号。请先在侧边栏添加至少一个带刷新令牌（refresh token）的账号。');
-      }
-      account = await setCurrentHotmailAccount(pendingAccount.id, {
-        markUsed: false,
-        syncEmail: true,
-      });
-      await addLog(
-        `自动运行${buildRoundLabel()}开始前未找到已校验 Hotmail 账号，正在尝试校验待校验账号 ${account.email}。`,
-        'warn'
-      );
-    }
-
-    try {
-      await addLog(
-        `自动运行${buildRoundLabel()}第 ${attemptRun} 次尝试开始前，正在校验 Hotmail 账号 ${account.email} 的邮箱可用性。`,
-        'info'
-      );
-      const result = await verifyHotmailAccount(account.id);
-      await addLog(
-        `自动运行${buildRoundLabel()}开始前已校验 Hotmail 账号 ${result.account?.email || account.email}，INBOX 当前 ${result.messageCount} 封邮件。`,
-        'ok'
-      );
-      return result.account;
-    } catch (error) {
-      lastError = error;
-      exhaustedAccountIds.add(account.id);
-      preferredAccountId = null;
-      const latestErrorMessage = error?.message || '未知错误';
-      await addLog(
-        `自动运行${buildRoundLabel()}开始前校验 Hotmail 账号 ${account.email} 失败：${latestErrorMessage}`,
-        'warn'
-      );
-      const nextState = await getState();
-      const hasRemainingAccounts = normalizeHotmailAccounts(nextState.hotmailAccounts)
-        .some((candidate) => (
-          isAuthorizedHotmailRunAccount(candidate) || isPendingHotmailVerificationCandidate(candidate)
-        ) && !exhaustedAccountIds.has(candidate.id));
-      if (hasRemainingAccounts) {
-        await addLog(`自动运行${buildRoundLabel()}开始前将切换下一个 Hotmail 账号并重试。`, 'warn');
-      }
-    }
-  }
 }
 
 async function testHotmailAccountMailAccess(accountId) {
@@ -9432,6 +9401,12 @@ function isPlusCheckoutNonFreeTrialFailure(error) {
   return /PLUS_CHECKOUT_NON_FREE_TRIAL::|今日应付金额不是\s*0|没有免费试用资格|该账号已经开通过\s*ChatGPT\s*订阅套餐，不能重复订阅(?:。)?(?:（\s*checkout_order\s*）|\(\s*checkout_order\s*\))?/i.test(message);
 }
 
+function isPlusCheckoutCloudConversionFailure(error) {
+  const rawMessage = String(typeof error === 'string' ? error : error?.message || '');
+  const message = `${rawMessage}\n${getErrorMessage(error)}`;
+  return /云端支付转换(?:失败|缺少|未获取到|服务地址|请求超时)/i.test(message);
+}
+
 function isGpcTaskEndedFailure(error) {
   const message = String(typeof error === 'string' ? error : error?.message || '');
   return /GPC_TASK_ENDED::/i.test(message);
@@ -9454,6 +9429,8 @@ function isPlusCheckoutRestartStep(step, stepExecutionKey = '', state = {}) {
   const normalizedKey = String(stepExecutionKey || '').trim();
   if (normalizedKey) {
     return normalizedKey === 'plus-checkout-create'
+      || normalizedKey === 'hosted-checkout-submit'
+      || normalizedKey === 'hosted-paypal-payment'
       || normalizedKey === 'plus-checkout-billing'
       || normalizedKey === 'gopay-subscription-confirm';
   }
@@ -9462,7 +9439,14 @@ function isPlusCheckoutRestartStep(step, stepExecutionKey = '', state = {}) {
 }
 
 function isPlusCheckoutRestartRequiredFailure(error) {
-  return !isPlusCheckoutNonFreeTrialFailure(error);
+  if (isPlusCheckoutNonFreeTrialFailure(error)) {
+    return false;
+  }
+  // 云端支付转换失败通常需要换服务端代理、换账号或等待服务恢复；同一状态自动重建 checkout 只会重复失败。
+  if (isPlusCheckoutCloudConversionFailure(error)) {
+    return false;
+  }
+  return true;
 }
 
 function isGoPayCheckoutRestartRequiredFailure(error) {
@@ -10731,35 +10715,39 @@ const AUTO_RUN_BACKGROUND_COMPLETED_STEPS = new Set([1, 2, 4, 6, 7, 8, 9]);
 const STEP_COMPLETION_SIGNAL_STEPS = new Set([3, 5, 10, 12]);
 const AUTO_RUN_BACKGROUND_COMPLETED_STEP_KEYS = new Set([
   'open-chatgpt',
-  'submit-signup-email',
-  'fetch-signup-code',
-  'wait-registration-success',
+  'fetch-existing-login-code',
   'local-cpa-json-export',
+  'plus-checkout-create',
+  'hosted-checkout-submit',
+  'hosted-paypal-payment',
   'plus-checkout-billing',
   'paypal-approve',
   'plus-checkout-return',
+  'plus-activation-success',
   'sub2api-session-import',
   'cpa-session-import',
-  'oauth-login',
-  'fetch-login-code',
   'post-login-phone-verification',
   'bind-email',
   'fetch-bind-email-code',
   'relogin-bound-email',
   'fetch-bound-email-login-code',
   'post-bound-email-phone-verification',
-  'confirm-oauth',
 ]);
 const STEP_COMPLETION_SIGNAL_STEP_KEYS = new Set([
-  'fill-password',
-  'fill-profile',
-  'plus-checkout-create',
+  'existing-account-login',
   'gopay-subscription-confirm',
-  'platform-verify',
 ]);
 const STEP_COMPLETION_SIGNAL_TIMEOUTS_BY_STEP_KEY = new Map([
-  ['fill-profile', 150000],
   ['gopay-subscription-confirm', 1800000],
+]);
+const PLUS_ACTIVATION_FAILURE_NODE_IDS = new Set([
+  'plus-checkout-create',
+  'hosted-checkout-submit',
+  'hosted-paypal-payment',
+  'plus-checkout-billing',
+  'paypal-approve',
+  'gopay-subscription-confirm',
+  'plus-activation-success',
 ]);
 const AUTO_RUN_PRE_EXECUTION_DELAYS_BY_STEP_KEY = new Map([
   ['plus-checkout-create', 5000],
@@ -11000,6 +10988,12 @@ async function failNodeFromBackground(nodeId, errorLike = '未知错误') {
   }
 
   const latestState = await getState();
+  if (PLUS_ACTIVATION_FAILURE_NODE_IDS.has(normalizedNodeId)) {
+    await setState({
+      plusActivationStatus: 'failed',
+      plusActivationMessage: message,
+    });
+  }
   await setNodeStatus(normalizedNodeId, 'failed');
   await addLog(`失败：${message}`, 'error', { nodeId: normalizedNodeId });
   await appendManualAccountRunRecordIfNeeded(`node:${normalizedNodeId}:failed`, latestState, message);
@@ -11840,22 +11834,16 @@ const MAIL_2925_VERIFICATION_MAX_ATTEMPTS = 15;
 const MAIL_2925_VERIFICATION_INTERVAL_MS = 15000;
 const AUTO_RUN_NODE_DELAYS = Object.freeze({
   'open-chatgpt': 2000,
-  'submit-signup-email': 2000,
-  'fill-password': 3000,
-  'fetch-signup-code': 2000,
-  'fill-profile': 0,
-  'wait-registration-success': 3000,
+  'existing-account-login': 2000,
+  'fetch-existing-login-code': 2000,
   'plus-checkout-create': 3000,
   'plus-checkout-billing': 2000,
   'gopay-subscription-confirm': 2000,
   'paypal-approve': 2000,
   'plus-checkout-return': 1000,
+  'plus-activation-success': 0,
   'sub2api-session-import': 0,
   'cpa-session-import': 0,
-  'oauth-login': 2000,
-  'fetch-login-code': 2000,
-  'confirm-oauth': 1000,
-  'platform-verify': 0,
 });
 
 function getAutoRunNodeDelayMs(nodeId) {
@@ -12323,7 +12311,6 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   cancelPendingCommands,
   clearStopRequest: () => clearStopRequest(),
   createAutoRunSessionId: () => createAutoRunSessionId(),
-  ensureHotmailMailboxReadyForAutoRunRound: (...args) => ensureHotmailMailboxReadyForAutoRunRound(...args),
   getAutoRunStatusPayload,
   getErrorMessage,
   getFirstUnfinishedNodeId,
@@ -12427,289 +12414,6 @@ function shouldStopEmailAutoFetchRetries(generator, error) {
   return generator === CLOUDFLARE_TEMP_EMAIL_GENERATOR && /(服务地址|Admin Auth|域名)/.test(message);
 }
 
-async function ensureAutoEmailReady(targetRun, totalRuns, attemptRuns) {
-  const currentState = await getState();
-  if (isHotmailProvider(currentState)) {
-    const account = await ensureHotmailAccountForFlow({
-      allowAllocate: true,
-      markUsed: true,
-      preferredAccountId: null,
-    });
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：已分配 Hotmail 账号 ${account.email}（第 ${attemptRuns} 次尝试）===`, 'ok');
-    return account.registrationAliasEmail || (await getState()).email || account.email;
-  }
-
-  if (isLuckmailProvider(currentState)) {
-    const purchase = await ensureLuckmailPurchaseForFlow({ allowReuse: true });
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：LuckMail 邮箱已就绪：${purchase.email_address}（第 ${attemptRuns} 次尝试）===`, 'ok');
-    return purchase.email_address;
-  }
-
-  if (isGeneratedAliasProvider(currentState)) {
-    if (currentState.mailProvider === GMAIL_PROVIDER) {
-      if (!currentState.emailPrefix) {
-        throw new Error('Gmail 原邮箱未设置，请先在侧边栏填写。');
-      }
-      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：Gmail +tag 模式已启用，将在步骤 3 自动生成邮箱（第 ${attemptRuns} 次尝试）===`, 'info');
-      return null;
-    }
-    if (!currentState.emailPrefix) {
-      throw new Error('2925 邮箱前缀未设置，请先在侧边栏填写。');
-    }
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：2925 模式已启用，将在步骤 3 自动生成邮箱（第 ${attemptRuns} 次尝试）===`, 'info');
-    return null;
-  }
-
-  if (currentState.email) {
-    return currentState.email;
-  }
-
-  if (isCustomMailProvider(currentState)) {
-    const poolSize = getCustomMailProviderPool(currentState).length;
-    if (poolSize > 0) {
-      const queuedEmail = getCustomMailProviderPoolEmailForRun(currentState, targetRun);
-      if (!queuedEmail) {
-        throw new Error(`自定义邮箱号池第 ${targetRun} 个邮箱不存在，请检查号池数量是否与自动轮数一致。`);
-      }
-      await setEmailState(queuedEmail);
-      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：自定义邮箱号池已就绪：${queuedEmail}（第 ${attemptRuns} 次尝试；第 4/8 步仍需手动输入验证码）===`, 'ok');
-      return queuedEmail;
-    }
-  }
-
-  if (isCustomEmailPoolGenerator(currentState)) {
-    const queuedEmail = getCustomEmailPoolEmailForRun(currentState, targetRun);
-    if (!queuedEmail) {
-      const poolSize = getCustomEmailPool(currentState).length;
-      throw new Error(
-        poolSize > 0
-          ? `自定义邮箱池第 ${targetRun} 个邮箱不存在，请检查邮箱池数量是否与自动轮数一致。`
-          : '自定义邮箱池为空，请先至少填写 1 个邮箱。'
-      );
-    }
-    await setEmailState(queuedEmail);
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：自定义邮箱池已就绪：${queuedEmail}（第 ${attemptRuns} 次尝试）===`, 'ok');
-    return queuedEmail;
-  }
-
-  if (shouldUseCustomRegistrationEmail(currentState)) {
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮已暂停：请先填写自定义注册邮箱，然后继续 ===`, 'warn');
-    await broadcastAutoRunStatus('waiting_email', {
-      currentRun: targetRun,
-      totalRuns,
-      attemptRun: attemptRuns,
-    });
-
-    await waitForResume();
-
-    const resumedState = await getState();
-    if (!resumedState.email) {
-      throw new Error('无法继续：当前没有注册邮箱。');
-    }
-    return resumedState.email;
-  }
-
-  const generator = normalizeEmailGenerator(currentState.emailGenerator);
-  const generatorLabel = getEmailGeneratorLabel(generator);
-  let lastError = null;
-  let attemptedFetches = 0;
-  for (let attempt = 1; attempt <= EMAIL_FETCH_MAX_ATTEMPTS; attempt++) {
-    attemptedFetches = attempt;
-    try {
-      if (attempt > 1) {
-        await addLog(`${generatorLabel}：正在进行第 ${attempt}/${EMAIL_FETCH_MAX_ATTEMPTS} 次自动获取重试...`, 'warn');
-      }
-      const generatedEmail = await fetchGeneratedEmail(currentState, {
-        generateNew: generator !== 'icloud' || normalizeIcloudFetchMode(currentState.icloudFetchMode) === 'always_new',
-        generator,
-      });
-      await addLog(
-        `=== 目标 ${targetRun}/${totalRuns} 轮：${generatorLabel}已就绪：${generatedEmail}（第 ${attemptRuns} 次尝试，第 ${attempt}/${EMAIL_FETCH_MAX_ATTEMPTS} 次获取）===`,
-        'ok'
-      );
-      return generatedEmail;
-    } catch (err) {
-      lastError = err;
-      await addLog(`${generatorLabel}自动获取失败（${attempt}/${EMAIL_FETCH_MAX_ATTEMPTS}）：${err.message}`, 'warn');
-      if (generator === 'icloud' && shouldStopIcloudAutoFetchRetries(err)) {
-        await addLog('iCloud：检测到会话/网络异常，本轮将停止重复重试。请先确认 iCloud 页面已登录，再点击“我已登录”或手动粘贴邮箱继续。', 'warn');
-      }
-      if (shouldStopEmailAutoFetchRetries(generator, err)) {
-        break;
-      }
-    }
-  }
-
-  const totalAttempts = Math.max(1, attemptedFetches);
-  await addLog(`${generatorLabel}自动获取已连续失败 ${totalAttempts} 次：${lastError?.message || '未知错误'}`, 'error');
-  await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮已暂停：请先自动获取邮箱或手动粘贴邮箱，然后继续 ===`, 'warn');
-  await broadcastAutoRunStatus('waiting_email', {
-    currentRun: targetRun,
-    totalRuns,
-    attemptRun: attemptRuns,
-  });
-
-  await waitForResume();
-
-  const resumedState = await getState();
-  if (!resumedState.email) {
-    throw new Error('无法继续：当前没有邮箱地址。');
-  }
-  return resumedState.email;
-}
-
-async function ensureAutoEmailReady(targetRun, totalRuns, attemptRuns) {
-  const currentState = await getState();
-  if (isHotmailProvider(currentState)) {
-    const account = await ensureHotmailAccountForFlow({
-      allowAllocate: true,
-      markUsed: true,
-      preferredAccountId: null,
-    });
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：已分配 Hotmail 账号 ${account.email}（第 ${attemptRuns} 次尝试）===`, 'ok');
-    return account.registrationAliasEmail || (await getState()).email || account.email;
-  }
-
-  if (isLuckmailProvider(currentState)) {
-    const purchase = await ensureLuckmailPurchaseForFlow({ allowReuse: true });
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：LuckMail 邮箱已就绪：${purchase.email_address}（第 ${attemptRuns} 次尝试）===`, 'ok');
-    return purchase.email_address;
-  }
-
-  if (isGeneratedAliasProvider(currentState)) {
-    if (isReusableGeneratedAliasEmail(currentState)) {
-      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：当前已复用 ${currentState.email}，将直接继续执行（第 ${attemptRuns} 次尝试）===`, 'info');
-      return currentState.email;
-    }
-
-    let managedAliasState = currentState;
-    if (
-      String(currentState.mailProvider || '').trim().toLowerCase() === '2925'
-      && Boolean(currentState.mail2925UseAccountPool)
-    ) {
-      const account = await ensureMail2925AccountForFlow({
-        allowAllocate: true,
-        preferredAccountId: currentState.currentMail2925AccountId || null,
-        markUsed: true,
-      });
-      managedAliasState = {
-        ...(await getState()),
-        currentMail2925AccountId: account.id,
-      };
-      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：已分配 2925 账号 ${account.email}（第 ${attemptRuns} 次尝试）===`, 'ok');
-    }
-
-    const baseEmail = getManagedAliasBaseEmail(managedAliasState);
-    if (!baseEmail && !managedAliasState.email) {
-      const baseLabel = currentState.mailProvider === GMAIL_PROVIDER ? 'Gmail 原邮箱' : '2925 基邮箱';
-      throw new Error(`${baseLabel}未设置，请先填写，或直接在“注册邮箱”中手动填写完整邮箱。`);
-    }
-
-    await addLog(
-      `=== 目标 ${targetRun}/${totalRuns} 轮：${currentState.mailProvider === GMAIL_PROVIDER ? 'Gmail +tag' : '2925'} 模式已启用，将在步骤 3 自动生成邮箱（第 ${attemptRuns} 次尝试）===`,
-      'info'
-    );
-    return null;
-  }
-
-  if (currentState.email) {
-    return currentState.email;
-  }
-
-  if (isCustomMailProvider(currentState)) {
-    const poolSize = getCustomMailProviderPool(currentState).length;
-    if (poolSize > 0) {
-      const queuedEmail = getCustomMailProviderPoolEmailForRun(currentState, targetRun);
-      if (!queuedEmail) {
-        throw new Error(`自定义邮箱号池第 ${targetRun} 个邮箱不存在，请检查号池数量是否与自动轮数一致。`);
-      }
-      await setEmailState(queuedEmail);
-      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：自定义邮箱号池已就绪：${queuedEmail}（第 ${attemptRuns} 次尝试；第 4/8 步仍需手动输入验证码）===`, 'ok');
-      return queuedEmail;
-    }
-  }
-
-  if (isCustomEmailPoolGenerator(currentState)) {
-    const queuedEmail = getCustomEmailPoolEmailForRun(currentState, targetRun);
-    if (!queuedEmail) {
-      const poolSize = getCustomEmailPool(currentState).length;
-      throw new Error(
-        poolSize > 0
-          ? `自定义邮箱池第 ${targetRun} 个邮箱不存在，请检查邮箱池数量是否与自动轮数一致。`
-          : '自定义邮箱池为空，请先至少填写 1 个邮箱。'
-      );
-    }
-    await setEmailState(queuedEmail);
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：自定义邮箱池已就绪：${queuedEmail}（第 ${attemptRuns} 次尝试）===`, 'ok');
-    return queuedEmail;
-  }
-
-  if (shouldUseCustomRegistrationEmail(currentState)) {
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮已暂停：请先填写自定义注册邮箱，然后继续 ===`, 'warn');
-    await broadcastAutoRunStatus('waiting_email', {
-      currentRun: targetRun,
-      totalRuns,
-      attemptRun: attemptRuns,
-    });
-
-    await waitForResume();
-
-    const resumedState = await getState();
-    if (!resumedState.email) {
-      throw new Error('无法继续：当前没有注册邮箱。');
-    }
-    return resumedState.email;
-  }
-
-  const generator = normalizeEmailGenerator(currentState.emailGenerator);
-  const generatorLabel = getEmailGeneratorLabel(generator);
-  let lastError = null;
-  let attemptedFetches = 0;
-  for (let attempt = 1; attempt <= EMAIL_FETCH_MAX_ATTEMPTS; attempt++) {
-    attemptedFetches = attempt;
-    try {
-      if (attempt > 1) {
-        await addLog(`${generatorLabel}：正在进行第 ${attempt}/${EMAIL_FETCH_MAX_ATTEMPTS} 次自动获取重试...`, 'warn');
-      }
-      const generatedEmail = await fetchGeneratedEmail(currentState, {
-        generateNew: generator !== 'icloud' || normalizeIcloudFetchMode(currentState.icloudFetchMode) === 'always_new',
-        generator,
-      });
-      await addLog(
-        `=== 目标 ${targetRun}/${totalRuns} 轮：${generatorLabel}已就绪：${generatedEmail}（第 ${attemptRuns} 次尝试，第 ${attempt}/${EMAIL_FETCH_MAX_ATTEMPTS} 次获取）===`,
-        'ok'
-      );
-      return generatedEmail;
-    } catch (err) {
-      lastError = err;
-      await addLog(`${generatorLabel}自动获取失败（${attempt}/${EMAIL_FETCH_MAX_ATTEMPTS}）：${err.message}`, 'warn');
-      if (generator === 'icloud' && shouldStopIcloudAutoFetchRetries(err)) {
-        await addLog('iCloud：检测到会话/网络异常，本轮将停止重复重试。请先确认 iCloud 页面已登录，再点击“我已登录”或手动粘贴邮箱继续。', 'warn');
-      }
-      if (shouldStopEmailAutoFetchRetries(generator, err)) {
-        break;
-      }
-    }
-  }
-
-  const totalAttempts = Math.max(1, attemptedFetches);
-  await addLog(`${generatorLabel}自动获取已连续失败 ${totalAttempts} 次：${lastError?.message || '未知错误'}`, 'error');
-  await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮已暂停：请先自动获取邮箱或手动粘贴邮箱，然后继续 ===`, 'warn');
-  await broadcastAutoRunStatus('waiting_email', {
-    currentRun: targetRun,
-    totalRuns,
-    attemptRun: attemptRuns,
-  });
-
-  await waitForResume();
-
-  const resumedState = await getState();
-  if (!resumedState.email) {
-    throw new Error('无法继续：当前没有邮箱地址。');
-  }
-  return resumedState.email;
-}
-
 async function runAutoSequenceFromNode(startNodeId, context = {}) {
   const state = await getState();
   const normalizedStartNodeId = String(startNodeId || '').trim();
@@ -12739,15 +12443,12 @@ function getAutoRunWorkflowNodeIds(state = {}) {
 
 async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
   const { targetRun, totalRuns, attemptRuns, continued = false } = context;
-  let postStep7RestartCount = 0;
   let goPayCheckoutRestartCount = 0;
   let gpcCheckoutRestartCount = 0;
   let plusCheckoutRestartCount = 0;
-  let step4RestartCount = 0;
   const nodeIdleRestartCounts = new Map();
   let currentStartNodeId = String(startNodeId || '').trim();
   let continueCurrentAttempt = continued;
-  const resolvedSignupMethod = await ensureResolvedSignupMethodForRun();
   const normalizePlusPaymentMethodForRun = typeof normalizePlusPaymentMethod === 'function'
     ? normalizePlusPaymentMethod
     : (value) => (String(value || '').trim().toLowerCase() === 'gpc-helper' ? 'gpc-helper' : String(value || '').trim().toLowerCase());
@@ -12776,16 +12477,6 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
     return title && title !== nodeId ? `${nodeId}（${title}）` : nodeId;
   };
   const getNodeIndex = (state, nodeId) => getAutoRunWorkflowNodeIds(state).indexOf(nodeId);
-  const shouldRunNamedNode = async (nodeId) => {
-    const state = await getState();
-    const nodeIds = getAutoRunWorkflowNodeIds(state);
-    const targetIndex = nodeIds.indexOf(nodeId);
-    if (targetIndex < 0) {
-      return false;
-    }
-    const startIndex = nodeIds.indexOf(currentStartNodeId);
-    return startIndex < 0 || startIndex <= targetIndex;
-  };
   const getPreviousNodeId = (nodeId, state = {}) => {
     const nodeIds = getAutoRunWorkflowNodeIds(state);
     const index = nodeIds.indexOf(nodeId);
@@ -12805,7 +12496,7 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
       try {
         error.failedNodeId = failedNodeId;
       } catch (_err) {
-        // Some host errors may be non-extensible; state-based inference still covers normal paths.
+        // 部分宿主错误对象不可扩展；常规路径仍可通过状态推断。
       }
     }
 
@@ -12814,7 +12505,7 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
       try {
         error.failedStep = failedStep;
       } catch (_err) {
-        // Some host errors may be non-extensible; state-based inference still covers normal paths.
+        // 部分宿主错误对象不可扩展；常规路径仍可通过状态推断。
       }
     }
 
@@ -12867,262 +12558,113 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
   };
 
   while (true) {
-
-  if (continueCurrentAttempt) {
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：继续当前进度，从节点 ${currentStartNodeId} 开始（第 ${attemptRuns} 次尝试）===`, 'info');
-  } else {
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：第 ${attemptRuns} 次尝试，阶段 1，打开官网并进入密码页 ===`, 'info');
-  }
-
-  if (await shouldRunNamedNode('open-chatgpt')) {
-    try {
-      await executeNodeAndWaitWithAutoRunIdleLogWatchdog('open-chatgpt', getAutoRunNodeDelayMs('open-chatgpt'));
-    } catch (err) {
-      attachFailedNode(err, 'open-chatgpt', await getState());
-      if (isStopError(err)) {
-        throw err;
-      }
-      if (await restartCurrentNodeAfterIdle('open-chatgpt', err)) {
-        continue;
-      }
-      throw err;
+    if (continueCurrentAttempt) {
+      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：继续当前进度，从节点 ${currentStartNodeId} 开始（第 ${attemptRuns} 次尝试）===`, 'info');
+    } else {
+      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：第 ${attemptRuns} 次尝试，按已有账户 Plus workflow 顺序执行 ===`, 'info');
     }
-  }
 
-  if (await shouldRunNamedNode('submit-signup-email')) {
-    try {
-      await runAutoNodeActionWithIdleLogWatchdog('submit-signup-email', async () => {
-        if (resolvedSignupMethod === SIGNUP_METHOD_PHONE) {
-          await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：本轮注册方式为手机号注册，将跳过邮箱预获取 ===`, 'info');
-        } else {
-          await ensureAutoEmailReady(targetRun, totalRuns, attemptRuns);
-        }
-        await executeNodeAndWait('submit-signup-email', getAutoRunNodeDelayMs('submit-signup-email'));
-      });
-    } catch (err) {
-      attachFailedNode(err, 'submit-signup-email', await getState());
-      if (isStopError(err)) {
-        throw err;
-      }
-      if (await restartCurrentNodeAfterIdle('submit-signup-email', err)) {
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  let restartFromStep1WithCurrentEmail = false;
-
-  if (await shouldRunNamedNode('fill-password')) {
-    const latestState = await getState();
-    const fillPasswordStatus = getNodeStatusForNode(latestState, 'fill-password');
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：阶段 2，填写密码、验证、登录并完成授权（第 ${attemptRuns} 次尝试）===`, 'info');
     await broadcastAutoRunStatus('running', {
       currentRun: targetRun,
       totalRuns,
       attemptRun: attemptRuns,
     });
-    if (isStepDoneStatus(fillPasswordStatus)) {
-      await addLog(`自动运行：节点 fill-password 当前状态为 ${fillPasswordStatus}，将直接继续后续流程。`, 'info');
-    } else {
+
+    const signupTabId = await getTabId('signup-page');
+    if (signupTabId) {
+      await chrome.tabs.update(signupTabId, { active: true });
+    }
+
+    let loopState = await getState();
+    let nodeIds = getAutoRunWorkflowNodeIds(loopState);
+    const startIndex = nodeIds.indexOf(currentStartNodeId);
+    let nodeIndex = startIndex >= 0 ? startIndex : 0;
+    while (nodeIndex < nodeIds.length) {
+      const latestState = await getState();
+      nodeIds = getAutoRunWorkflowNodeIds(latestState);
+      const nodeId = nodeIds[nodeIndex];
+      if (!nodeId) {
+        nodeIndex += 1;
+        continue;
+      }
+      const currentStatus = getNodeStatusForNode(latestState, nodeId);
+      if (isStepDoneStatus(currentStatus)) {
+        await addLog(`自动运行：节点 ${nodeId} 当前状态为 ${currentStatus}，将直接继续后续流程。`, 'info');
+        nodeIndex += 1;
+        continue;
+      }
       try {
-        await executeNodeAndWaitWithAutoRunIdleLogWatchdog('fill-password', getAutoRunNodeDelayMs('fill-password'));
+        await executeNodeAndWaitWithAutoRunIdleLogWatchdog(nodeId, getAutoRunNodeDelayMs(nodeId));
+        nodeIndex += 1;
       } catch (err) {
-        attachFailedNode(err, 'fill-password', latestState);
+        attachFailedNode(err, nodeId, latestState);
         if (isStopError(err)) {
           throw err;
         }
-        if (await restartCurrentNodeAfterIdle('fill-password', err)) {
+
+        if (await restartCurrentNodeAfterIdle(nodeId, err)) {
           continue;
         }
-        if (isSignupPhonePasswordMismatchFailure(err)) {
-          step4RestartCount += 1;
-          await restartSignupPhonePasswordMismatchAttemptFromNode('fill-password', step4RestartCount, err);
-          setRestartNode('open-chatgpt');
-          restartFromStep1WithCurrentEmail = true;
-          continue;
-        }
-        throw err;
-      }
-    }
-  } else {
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：继续执行剩余流程（第 ${attemptRuns} 次尝试）===`, 'info');
-  }
 
-  if (restartFromStep1WithCurrentEmail) {
-    continue;
-  }
-
-  const signupTabId = await getTabId('signup-page');
-  if (signupTabId) {
-    await chrome.tabs.update(signupTabId, { active: true });
-  }
-
-  let loopState = await getState();
-  let nodeIds = getAutoRunWorkflowNodeIds(loopState);
-  const firstVerificationIndex = nodeIds.indexOf('fetch-signup-code');
-  const startIndex = nodeIds.indexOf(currentStartNodeId);
-  let nodeIndex = Math.max(
-    startIndex >= 0 ? startIndex : 0,
-    firstVerificationIndex >= 0 ? firstVerificationIndex : 0
-  );
-  while (nodeIndex < nodeIds.length) {
-    const latestState = await getState();
-    nodeIds = getAutoRunWorkflowNodeIds(latestState);
-    const nodeId = nodeIds[nodeIndex];
-    if (!nodeId) {
-      nodeIndex += 1;
-      continue;
-    }
-    const currentStatus = getNodeStatusForNode(latestState, nodeId);
-    if (isStepDoneStatus(currentStatus)) {
-      await addLog(`自动运行：节点 ${nodeId} 当前状态为 ${currentStatus}，将直接继续后续流程。`, 'info');
-      nodeIndex += 1;
-      continue;
-    }
-    try {
-      await executeNodeAndWaitWithAutoRunIdleLogWatchdog(nodeId, getAutoRunNodeDelayMs(nodeId));
-      nodeIndex += 1;
-    } catch (err) {
-      attachFailedNode(err, nodeId, latestState);
-      if (isStopError(err)) {
-        throw err;
-      }
-
-      if (await restartCurrentNodeAfterIdle(nodeId, err)) {
-        continue;
-      }
-
-      const step = getDisplayStepForNode(nodeId, latestState);
-      const nodeExecutionKey = getNodeExecutionKey(nodeId, latestState);
-      const isGpcCheckoutStep = normalizePlusPaymentMethodForRun(latestState?.plusPaymentMethod) === plusPaymentMethodGpcHelper
-        || String(latestState?.plusCheckoutSource || '').trim() === plusPaymentMethodGpcHelper;
-      if (isPlusCheckoutRestartStep(step, nodeExecutionKey, latestState)
-        && isPlusCheckoutRestartRequiredFailure(err)) {
-        const isGoPayCheckoutStep = nodeExecutionKey === 'gopay-subscription-confirm'
-          || normalizePlusPaymentMethodForRun(latestState?.plusPaymentMethod) === 'gopay';
-        if (isGpcCheckoutStep) {
-          gpcCheckoutRestartCount += 1;
-        } else if (isGoPayCheckoutStep) {
-          goPayCheckoutRestartCount += 1;
-        } else {
-          plusCheckoutRestartCount += 1;
-        }
-        const checkoutRestartCount = isGpcCheckoutStep
-          ? gpcCheckoutRestartCount
-          : (isGoPayCheckoutStep ? goPayCheckoutRestartCount : plusCheckoutRestartCount);
-        const checkoutLabel = isGpcCheckoutStep
-          ? 'GPC 任务'
-          : (isGoPayCheckoutStep ? 'GoPay 订阅' : 'Plus Checkout');
-        const recreateLabel = isGpcCheckoutStep
-          ? '重新创建 GPC 任务'
-          : (isGoPayCheckoutStep ? '重新创建 GoPay 订阅' : '重新创建 Plus Checkout');
-        await addLog(
-          `节点 ${getNodeLabel(nodeId, latestState)}：检测到 ${checkoutLabel} 失败/卡住，准备回到节点 plus-checkout-create ${recreateLabel}（第 ${checkoutRestartCount} 次）。原因：${getErrorMessage(err)}`,
-          'warn'
-        );
-        const checkoutResetAnchorNodeId = getPreviousNodeId('plus-checkout-create', latestState) || 'fill-profile';
-        await invalidateDownstreamAfterAutoRunNodeRestart(checkoutResetAnchorNodeId, {
-          logLabel: `节点 ${nodeId} ${checkoutLabel}失败后准备回到 plus-checkout-create 重试（第 ${checkoutRestartCount} 次）`,
-        });
-        nodeIndex = Math.max(0, getNodeIndex(await getState(), 'plus-checkout-create'));
-        continue;
-      }
-
-      if (nodeId === 'paypal-approve' && isGoPayCheckoutRestartRequiredFailure(err)) {
-        goPayCheckoutRestartCount += 1;
-        if (goPayCheckoutRestartCount > 3) {
-          await addLog(`节点 paypal-approve：GoPay Checkout 已连续重建 ${goPayCheckoutRestartCount - 1} 次仍失败，停止自动重试。原因：${getErrorMessage(err)}`, 'error');
-          throw err;
-        }
-        await addLog(
-          `节点 paypal-approve：检测到 GoPay 支付页失效/卡死，准备关闭旧页并回到节点 plus-checkout-create 重新创建 Checkout（第 ${goPayCheckoutRestartCount}/3 次）。原因：${getErrorMessage(err)}`,
-          'warn'
-        );
-        await invalidateDownstreamAfterAutoRunNodeRestart(getPreviousNodeId('plus-checkout-create', latestState) || 'fill-profile', {
-          logLabel: `节点 paypal-approve GoPay 支付页失效后准备回到 plus-checkout-create 重试（第 ${goPayCheckoutRestartCount}/3 次）`,
-        });
-        nodeIndex = Math.max(0, getNodeIndex(await getState(), 'plus-checkout-create'));
-        continue;
-      }
-
-      if (nodeId === 'fetch-signup-code') {
-        if (isSignupUserAlreadyExistsFailure(err)) {
-          throw err;
-        }
-        if (isMail2925ThreadTerminatedError(err)) {
-          await addLog(`节点 fetch-signup-code：2925 已切换账号并要求结束当前尝试：${getErrorMessage(err)}`, 'warn');
-          throw err;
-        }
-        step4RestartCount += 1;
-        const isPhoneResendBanned = typeof phoneVerificationHelpers !== 'undefined'
-          && typeof phoneVerificationHelpers?.isPhoneResendBannedNumberError === 'function'
-          && phoneVerificationHelpers.isPhoneResendBannedNumberError(err);
-        if (isSignupPhonePasswordMismatchFailure(err) || isPhoneResendBanned) {
-          await restartSignupPhonePasswordMismatchAttemptFromNode('fetch-signup-code', step4RestartCount, err);
-        } else {
-          const preservedState = await getState();
-          const preservedEmail = String(preservedState.email || '').trim();
-          const preservedPassword = String(preservedState.password || '').trim();
-          const emailSuffix = preservedEmail ? `当前邮箱：${preservedEmail}；` : '';
+        const step = getDisplayStepForNode(nodeId, latestState);
+        const nodeExecutionKey = getNodeExecutionKey(nodeId, latestState);
+        const isGpcCheckoutStep = normalizePlusPaymentMethodForRun(latestState?.plusPaymentMethod) === plusPaymentMethodGpcHelper
+          || String(latestState?.plusCheckoutSource || '').trim() === plusPaymentMethodGpcHelper;
+        if (isPlusCheckoutRestartStep(step, nodeExecutionKey, latestState)
+          && isPlusCheckoutRestartRequiredFailure(err)) {
+          const isGoPayCheckoutStep = nodeExecutionKey === 'gopay-subscription-confirm'
+            || normalizePlusPaymentMethodForRun(latestState?.plusPaymentMethod) === 'gopay';
+          if (isGpcCheckoutStep) {
+            gpcCheckoutRestartCount += 1;
+          } else if (isGoPayCheckoutStep) {
+            goPayCheckoutRestartCount += 1;
+          } else {
+            plusCheckoutRestartCount += 1;
+          }
+          const checkoutRestartCount = isGpcCheckoutStep
+            ? gpcCheckoutRestartCount
+            : (isGoPayCheckoutStep ? goPayCheckoutRestartCount : plusCheckoutRestartCount);
+          const checkoutLabel = isGpcCheckoutStep
+            ? 'GPC 任务'
+            : (isGoPayCheckoutStep ? 'GoPay 订阅' : 'Plus Checkout');
+          const recreateLabel = isGpcCheckoutStep
+            ? '重新创建 GPC 任务'
+            : (isGoPayCheckoutStep ? '重新创建 GoPay 订阅' : '重新创建 Plus Checkout');
           await addLog(
-            `节点 fetch-signup-code：执行失败，准备沿用当前邮箱回到节点 open-chatgpt 重新开始（第 ${step4RestartCount} 次重开）。${emailSuffix}原因：${getErrorMessage(err)}`,
+            `节点 ${getNodeLabel(nodeId, latestState)}：检测到 ${checkoutLabel} 失败/卡住，准备回到节点 plus-checkout-create ${recreateLabel}（第 ${checkoutRestartCount} 次）。原因：${getErrorMessage(err)}`,
             'warn'
           );
-          await invalidateDownstreamAfterAutoRunNodeRestart('open-chatgpt', {
-            logLabel: `节点 fetch-signup-code 报错后准备回到 open-chatgpt 沿用当前邮箱重试（第 ${step4RestartCount} 次重开）`,
+          const checkoutResetAnchorNodeId = getPreviousNodeId('plus-checkout-create', latestState) || 'fetch-existing-login-code';
+          await invalidateDownstreamAfterAutoRunNodeRestart(checkoutResetAnchorNodeId, {
+            logLabel: `节点 ${nodeId} ${checkoutLabel}失败后准备回到 plus-checkout-create 重试（第 ${checkoutRestartCount} 次）`,
           });
-          const restorePayload = {};
-          if (preservedEmail) restorePayload.email = preservedEmail;
-          if (preservedPassword) restorePayload.password = preservedPassword;
-          if (Object.keys(restorePayload).length) {
-            await setState(restorePayload);
-          }
+          nodeIndex = Math.max(0, getNodeIndex(await getState(), 'plus-checkout-create'));
+          continue;
         }
-        setRestartNode('open-chatgpt');
-        restartFromStep1WithCurrentEmail = true;
-        break;
-      }
 
-      const restartDecision = await getPostStep6AutoRestartDecision(step, err);
-      if (restartDecision.shouldRestart) {
-        postStep7RestartCount += 1;
-        const restartStep = restartDecision.restartStep;
-        const restartNodeId = String(getNodeIdByStepForState(restartStep, await getState()) || 'oauth-login').trim();
-        const resetAfterNodeId = getPreviousNodeId(restartNodeId, await getState()) || restartNodeId;
-        const authState = restartDecision.authState;
-        const authStateLabel = authState?.state ? getLoginAuthStateLabel(authState.state) : '未知页面';
-        const authStateSuffix = authState?.url
-          ? `当前认证页：${authStateLabel}（${authState.url}）`
-          : authState?.state
-            ? `当前认证页：${authStateLabel}`
-            : '未获取到认证页状态';
-        await addLog(
-          `节点 ${getNodeLabel(nodeId, latestState)}：检测到报错且当前未进入 add-phone，正在回到节点 ${restartNodeId} 重新开始授权流程（第 ${postStep7RestartCount} 次重开）。${authStateSuffix}；原因：${restartDecision.errorMessage || '未知错误'}`,
-          'warn'
-        );
-        await invalidateDownstreamAfterAutoRunNodeRestart(resetAfterNodeId, {
-          logLabel: `节点 ${nodeId} 报错后准备回到 ${restartNodeId} 重试（第 ${postStep7RestartCount} 次重开）`,
-        });
-        nodeIndex = Math.max(0, getNodeIndex(await getState(), restartNodeId));
-        continue;
-      }
+        if (nodeId === 'paypal-approve' && isGoPayCheckoutRestartRequiredFailure(err)) {
+          goPayCheckoutRestartCount += 1;
+          if (goPayCheckoutRestartCount > 3) {
+            await addLog(`节点 paypal-approve：GoPay Checkout 已连续重建 ${goPayCheckoutRestartCount - 1} 次仍失败，停止自动重试。原因：${getErrorMessage(err)}`, 'error');
+            throw err;
+          }
+          await addLog(
+            `节点 paypal-approve：检测到 GoPay 支付页失效/卡死，准备关闭旧页并回到节点 plus-checkout-create 重新创建 Checkout（第 ${goPayCheckoutRestartCount}/3 次）。原因：${getErrorMessage(err)}`,
+            'warn'
+          );
+          await invalidateDownstreamAfterAutoRunNodeRestart(getPreviousNodeId('plus-checkout-create', latestState) || 'fetch-existing-login-code', {
+            logLabel: `节点 paypal-approve GoPay 支付页失效后准备回到 plus-checkout-create 重试（第 ${goPayCheckoutRestartCount}/3 次）`,
+          });
+          nodeIndex = Math.max(0, getNodeIndex(await getState(), 'plus-checkout-create'));
+          continue;
+        }
 
-      if (restartDecision.blockedByAddPhone) {
-        const addPhoneUrl = restartDecision.authState?.url || 'https://auth.openai.com/add-phone';
-        const authChainStartNodeId = String(getNodeIdByStepForState(restartDecision.restartStep, await getState()) || 'oauth-login').trim();
-        await addLog(`节点 ${getNodeLabel(nodeId, latestState)}：检测到认证流程进入 add-phone（${addPhoneUrl}），停止自动回到节点 ${authChainStartNodeId} 重开。`, 'warn');
+        throw err;
       }
-      throw err;
     }
-  }
 
-  if (restartFromStep1WithCurrentEmail) {
-    continue;
+    break;
   }
-
-  break;
-}
 }
 
 async function waitForResume() {
@@ -13507,6 +13049,33 @@ const step7Executor = self.MultiPageBackgroundStep7?.createStep7Executor({
   STEP6_MAX_ATTEMPTS,
   throwIfStopped,
 });
+const existingAccountLoginExecutor = self.MultiPageBackgroundExistingAccountLogin?.createExistingAccountLoginExecutor({
+  addLog,
+  completeNodeFromBackground,
+  getErrorMessage,
+  getLoginAuthStateLabel,
+  getOAuthFlowStepTimeoutMs,
+  isStep6RecoverableResult,
+  isStep6SuccessResult,
+  reuseOrCreateTab,
+  sendToContentScriptResilient,
+  SIGNUP_PAGE_INJECT_FILES,
+  STEP6_MAX_ATTEMPTS,
+  throwIfStopped,
+});
+const fetchExistingLoginCodeExecutor = self.MultiPageBackgroundFetchExistingLoginCode?.createFetchExistingLoginCodeExecutor({
+  addLog,
+  chrome,
+  completeNodeFromBackground,
+  fetchImpl: (...args) => fetch(...args),
+  getTabId,
+  isRetryableContentScriptTransportError,
+  sendToContentScript,
+  sendToContentScriptResilient,
+  setState,
+  sleepImpl: sleepWithStop,
+  throwIfStopped,
+});
 const step8Executor = self.MultiPageBackgroundStep8?.createStep8Executor({
   addLog,
   chrome,
@@ -13548,11 +13117,11 @@ const plusCheckoutCreateExecutor = self.MultiPageBackgroundPlusCheckoutCreate?.c
   chrome,
   completeNodeFromBackground,
   createAutomationTab,
-  enableHostedCheckoutAutomation: true,
   ensureContentScriptReadyOnTabUntilStopped,
-  failNodeFromBackground,
   fetch: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  getTabId,
   getState,
+  isTabAlive,
   requestStop,
   getLastNodeIdForState,
   markCurrentRegistrationAccountUsed,
@@ -13638,6 +13207,11 @@ const plusReturnConfirmExecutor = self.MultiPageBackgroundPlusReturnConfirm?.cre
   setState,
   sleepWithStop,
   waitForTabUrlMatchUntilStopped,
+});
+const plusActivationSuccessExecutor = self.MultiPageBackgroundPlusActivationSuccess?.createPlusActivationSuccessExecutor({
+  addLog,
+  completeNodeFromBackground,
+  setState,
 });
 const sub2ApiSessionImportExecutor = self.MultiPageBackgroundSub2ApiSessionImport?.createSub2ApiSessionImportExecutor({
   addLog,
@@ -13732,37 +13306,34 @@ async function executeReloginBoundEmail(state = {}) {
 
 const stepExecutorsByKey = {
   'open-chatgpt': () => step1Executor.executeStep1(),
-  'submit-signup-email': (state) => step2Executor.executeStep2(state),
-  'fill-password': (state) => step3Executor.executeStep3(state),
-  'fetch-signup-code': (state) => step4Executor.executeStep4(state),
-  'fill-profile': (state) => step5Executor.executeStep5(state),
-  'wait-registration-success': (state) => step6Executor.executeStep6(state),
   'local-cpa-json-export': (state) => step6Executor.executeLocalCpaJsonNoRtExport(state),
   'plus-checkout-create': (state) => plusCheckoutCreateExecutor.executePlusCheckoutCreate(state),
+  'hosted-checkout-submit': (state) => plusCheckoutCreateExecutor.executeHostedCheckoutSubmit(state),
+  'hosted-paypal-payment': (state) => plusCheckoutCreateExecutor.executeHostedPayPalPayment(state),
   'plus-checkout-billing': (state) => plusCheckoutBillingExecutor.executePlusCheckoutBilling(state),
   'gopay-subscription-confirm': (state) => goPayManualConfirmExecutor.executeGoPayManualConfirm(state),
   'paypal-approve': (state) => normalizePlusPaymentMethod(state?.plusPaymentMethod) === PLUS_PAYMENT_METHOD_GOPAY
     ? goPayApproveExecutor.executeGoPayApprove(state)
     : payPalApproveExecutor.executePayPalApprove(state),
   'plus-checkout-return': (state) => plusReturnConfirmExecutor.executePlusReturnConfirm(state),
+  'plus-activation-success': (state) => plusActivationSuccessExecutor.executePlusActivationSuccess(state),
   'sub2api-session-import': (state) => sub2ApiSessionImportExecutor.executeSub2ApiSessionImport(state),
   'cpa-session-import': (state) => cpaSessionImportExecutor.executeCpaSessionImport(state),
-  'oauth-login': (state) => step7Executor.executeStep7(state),
-  'fetch-login-code': (state) => step8Executor.executeStep8(state),
+  'existing-account-login': (state) => existingAccountLoginExecutor.executeExistingAccountLogin(state),
+  'fetch-existing-login-code': (state) => fetchExistingLoginCodeExecutor.executeFetchExistingLoginCode(state),
   'post-login-phone-verification': (state) => step8Executor.executePostLoginPhoneVerification(state),
   'bind-email': (state) => step8Executor.executeBindEmail(state),
   'fetch-bind-email-code': (state) => step8Executor.executeFetchBindEmailCode(state),
   'relogin-bound-email': (state) => executeReloginBoundEmail(state),
   'fetch-bound-email-login-code': (state) => step8Executor.executeBoundEmailLoginCode(state),
   'post-bound-email-phone-verification': (state) => step8Executor.executeBoundEmailPostLoginPhoneVerification(state),
-  'confirm-oauth': (state) => step9Executor.executeStep9(state),
-  'platform-verify': (state) => executeStep10(state),
 };
 const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter({
   addLog,
   appendAccountRunRecord: (...args) => appendAndBroadcastAccountRunRecord(...args),
   batchUpdateLuckmailPurchases,
   buildLocalhostCleanupPrefix,
+  buildExistingAccountUpdatesFromSettings,
   buildLuckmailSessionSettingsPayload,
   buildPersistentSettingsPayload,
   broadcastDataUpdate,
@@ -13886,6 +13457,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   setNodeStatus,
   skipAutoRunCountdown,
   skipNode,
+  sanitizeDataUpdatePayloadForBroadcast,
   startContributionFlow: (...args) => contributionOAuthManager?.startContributionFlow?.(...args),
   startAutoRunLoop,
   pollContributionStatus: (...args) => contributionOAuthManager?.pollContributionStatus?.(...args),

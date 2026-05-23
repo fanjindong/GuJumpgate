@@ -1,29 +1,27 @@
-# Checkout Converter Service
+# 支付转换服务说明
 
-把当前项目里的 Plus checkout 创建逻辑抽成一个独立可部署的云端服务。
+本服务把扩展里的 Plus Checkout 创建逻辑拆成可独立部署的云端服务。扩展开启 `云端支付转换` 后，会把当前 ChatGPT `accessToken` 发送到该服务，由服务端生成可用的 Plus Checkout 链接。
 
 ## 能力范围
 
-- 输入 ChatGPT `accessToken`
-- 按当前项目的规则创建 Plus checkout session
-- 返回：
-  - `checkoutUrl`
-  - `chatgptCheckoutUrl`
-  - `hostedCheckoutUrl`
-  - `preferredCheckoutUrl`
+- 接收 ChatGPT `accessToken`。
+- 按当前项目规则创建 Plus Checkout。
+- 返回 ChatGPT Checkout 链接和 PayPal Hosted Checkout 链接。
+- 通过 `X-API-Key` 做简单服务鉴权。
+- 支持并发参数和上游请求超时配置。
 
-当前实现与项目内 [content/plus-checkout.js](I:\FlowPilot-FlowPilot1.0\FlowPilot-FlowPilot1.0.2\content\plus-checkout.js:978) 保持一致：
+当前实现与项目内 [content/plus-checkout.js](../../content/plus-checkout.js) 的 Checkout 创建规则保持一致：
 
-- `paypal` 默认 `US / USD`
-- `gopay` 默认 `ID / IDR`
-- 默认转换后的 `processorEntity` 为 `openai_llc`
-- `paypal` 优先返回 `pay.openai.com` 的 hosted checkout 长链
+- `paypal` 默认使用 `US / USD`。
+- `gopay` 默认使用 `ID / IDR`。
+- 默认转换后的 `processorEntity` 为 `openai_llc`。
+- `paypal` 优先返回 `pay.openai.com` 的 Hosted Checkout 长链。
 
 ## 接口
 
 ### `GET /healthz`
 
-健康检查与当前并发配置概览。
+用于健康检查，并返回当前并发配置概览。
 
 ### `POST /api/checkout`
 
@@ -31,7 +29,7 @@
 
 ```text
 Content-Type: application/json
-X-API-Key: <你的服务鉴权，可选但强烈建议开启>
+X-API-Key: <你的服务鉴权密钥>
 ```
 
 请求体：
@@ -70,6 +68,17 @@ X-API-Key: <你的服务鉴权，可选但强烈建议开启>
 
 ## 本地启动
 
+```bash
+cd services/checkout-converter
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+export CHECKOUT_CONVERTER_API_KEY="replace-me"
+python -m uvicorn app:app --host 0.0.0.0 --port 8080
+```
+
+Windows PowerShell 可使用：
+
 ```powershell
 cd services/checkout-converter
 python -m venv .venv
@@ -78,42 +87,29 @@ $env:CHECKOUT_CONVERTER_API_KEY="replace-me"
 .\.venv\Scripts\python.exe -m uvicorn app:app --host 0.0.0.0 --port 8080
 ```
 
-## Docker
+## Docker 部署
 
-```powershell
+```bash
 cd services/checkout-converter
 docker build -t checkout-converter .
-docker run -d `
-  -p 8080:8080 `
-  -e CHECKOUT_CONVERTER_API_KEY=replace-me `
-  -e MAX_OUTBOUND_CONCURRENCY=200 `
-  -e SESSION_MAX_CLIENTS=400 `
-  --name checkout-converter `
+docker run -d \
+  -p 8080:8080 \
+  -e CHECKOUT_CONVERTER_API_KEY=replace-me \
+  -e MAX_OUTBOUND_CONCURRENCY=200 \
+  -e SESSION_MAX_CLIENTS=400 \
+  --name checkout-converter \
   checkout-converter
 ```
 
-## 生产部署建议
+## 生产建议
 
-### 1. 进程模型
-
-推荐用 `gunicorn + uvicorn worker`：
+推荐使用 `gunicorn + uvicorn worker`：
 
 ```bash
 gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:8080 app:app
 ```
 
-如果是 4 核机器，建议从 `2` 或 `3` 个 worker 起步，不要一开始把 worker 开太高。
-
-### 2. 并发参数
-
-- `MAX_OUTBOUND_CONCURRENCY`
-  控制单进程同时向 OpenAI 发起多少个 checkout 请求
-- `SESSION_MAX_CLIENTS`
-  控制 `curl_cffi.AsyncSession` 连接池容量
-- `REQUEST_TIMEOUT_SECONDS`
-  单次上游请求超时
-
-建议起步值：
+建议起步配置：
 
 ```text
 MAX_OUTBOUND_CONCURRENCY=200
@@ -121,31 +117,12 @@ SESSION_MAX_CLIENTS=400
 REQUEST_TIMEOUT_SECONDS=30
 ```
 
-如果你的机器出口稳定、CPU 余量足，再逐步提高。
+注意事项：
 
-### 3. 高并发注意点
-
-- 不要把 access token 打到日志里
-- `X-API-Key` 必开
-- 入口层建议再加一层 Nginx 限流
-- 如需更稳的机房出口，优先通过固定代理或住宅代理出站
-- 如果业务会重复提交同一 token，最好在调用方做去重或幂等控制
-
-### 4. Cloudflare 风险
-
-虽然这里用了 `curl_cffi` 的浏览器指纹模拟，但云服务器出口 IP 仍然可能被挑战。
-
-如果你遇到：
-
-- `upstream blocked by Cloudflare challenge`
-- 403 / 429 明显增多
-
-优先排查：
-
-1. 服务器出口 IP 质量
-2. 是否需要固定代理出站
-3. 并发是否过高
-4. 是否同一 token 被短时间重复调用
+- 不要把 `accessToken` 输出到日志。
+- 生产环境必须设置 `CHECKOUT_CONVERTER_API_KEY`。
+- 入口层建议增加限流。
+- 如果上游出现 403、429 或 Cloudflare challenge，应优先排查出口 IP 质量和并发设置。
 
 ## 环境变量
 

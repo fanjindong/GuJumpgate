@@ -9,6 +9,8 @@ const PAYPAL_HOSTED_STAGE_GUEST_CHECKOUT = 'guest_checkout';
 const PAYPAL_HOSTED_STAGE_VERIFICATION = 'verification';
 const PAYPAL_HOSTED_STAGE_REVIEW = 'review_consent';
 const PAYPAL_HOSTED_STAGE_APPROVAL = 'approval';
+const PAYPAL_HOSTED_STAGE_GENERIC_ERROR = 'generic_error';
+const PAYPAL_HOSTED_STAGE_ACCOUNT_LOGOUT = 'account_logout';
 const PAYPAL_HOSTED_STAGE_UNKNOWN = 'unknown';
 const PAYPAL_HOSTED_HERMES_AUTORUN_SENTINEL = '__MULTIPAGE_PAYPAL_HOSTED_HERMES_AUTORUN__';
 const PAYPAL_HOSTED_GUEST_SUBMIT_SENTINEL = '__MULTIPAGE_PAYPAL_HOSTED_GUEST_SUBMIT__';
@@ -242,6 +244,63 @@ function getPayPalHostedPathname() {
   return String(location?.pathname || '').trim();
 }
 
+function getPayPalHostedSearchParams() {
+  return new URLSearchParams(String(location?.search || ''));
+}
+
+function getPayPalHostedErrorCode() {
+  const raw = String(getPayPalHostedSearchParams().get('errorCode') || '').trim();
+  if (!raw) {
+    return '';
+  }
+  if (/^BUYER_RESTRICTION$/i.test(raw)) {
+    return 'BUYER_RESTRICTION';
+  }
+  if (raw === 'QlVZRVJfUkVTVFJJQ1RJT04=') {
+    return 'BUYER_RESTRICTION';
+  }
+  const decoder = typeof atob === 'function' ? atob : null;
+  if (!decoder) {
+    return raw;
+  }
+  try {
+    return String(decoder(raw) || '').trim() || raw;
+  } catch {
+    return raw;
+  }
+}
+
+function hasPayPalHostedCheckoutErrorParams() {
+  const params = getPayPalHostedSearchParams();
+  const token = String(params.get('token') || '').trim();
+  return /^BA-/i.test(token) && Boolean(getPayPalHostedErrorCode());
+}
+
+function isPayPalHostedGenericErrorPage() {
+  return /^\/pay\/generic-error\/?$/i.test(getPayPalHostedPathname())
+    && hasPayPalHostedCheckoutErrorParams();
+}
+
+function findPayPalCheckAccountButton() {
+  return findClickableByText([
+    /check\s+your\s+account/i,
+    /检查.*账户|查看.*账户/i,
+  ]);
+}
+
+function findPayPalLogoutButton() {
+  return findClickableByText([
+    /^log\s*out$/i,
+    /退出|登出/i,
+  ]);
+}
+
+function isPayPalHostedAccountLogoutPage() {
+  return /^\/?$/i.test(getPayPalHostedPathname())
+    && hasPayPalHostedCheckoutErrorParams()
+    && Boolean(findPayPalLogoutButton());
+}
+
 function isPayPalHostedLoginPage() {
   const pathname = getPayPalHostedPathname();
   return pathname === '/pay'
@@ -256,7 +315,21 @@ function isPayPalHostedGuestCheckoutPage() {
 }
 
 function isPayPalHostedReviewPage() {
-  return /\/webapps\/hermes/i.test(getPayPalHostedPathname());
+  const pathname = getPayPalHostedPathname();
+  if (/\/webapps\/hermes/i.test(pathname)) {
+    return true;
+  }
+  if (!/^\/pay\/billing\/?$/i.test(pathname)) {
+    return false;
+  }
+  const params = new URLSearchParams(String(location?.search || ''));
+  const token = String(params.get('token') || '').trim();
+  // /pay/billing 也可能承载 hosted checkout 的账单确认页；必须结合 hosted 链路参数判断，
+  // 否则普通 PayPal 授权页上的 Continue 会被误当成当前流程可处理的页面。
+  return /^BA-/i.test(token)
+    || params.get('redirectToHermes') === 'true'
+    || params.get('fromSignupLite') === 'true'
+    || params.get('fallback') === '1';
 }
 
 function findHostedVerificationInputs() {
@@ -283,6 +356,12 @@ function findHostedReviewConsentButton() {
 function detectPayPalHostedCheckoutStage() {
   if (!/paypal\./i.test(String(location?.host || ''))) {
     return PAYPAL_HOSTED_STAGE_OUTSIDE;
+  }
+  if (isPayPalHostedGenericErrorPage()) {
+    return PAYPAL_HOSTED_STAGE_GENERIC_ERROR;
+  }
+  if (isPayPalHostedAccountLogoutPage()) {
+    return PAYPAL_HOSTED_STAGE_ACCOUNT_LOGOUT;
   }
   if (hasHostedVerificationInputs()) {
     return PAYPAL_HOSTED_STAGE_VERIFICATION;
@@ -633,7 +712,19 @@ async function fillHostedGuestCheckout(payload = {}) {
 
 async function clickHostedReviewConsent() {
   await waitForDocumentComplete();
-  log(`PayPal Hermes：开始等待账单确认文案。当前 URL：${location.href}`, 'info');
+  const immediateButton = findHostedReviewConsentButton();
+  if (immediateButton) {
+    // PayPal 有时把 hosted checkout 账单确认页落在 /pay/billing，
+    // 该页面不会出现 Hermes 固定文案，但已经展示 Agree and Continue 按钮。
+    log(`PayPal hosted checkout 账单确认页：已找到确认按钮，准备点击。当前 URL：${location.href}`, 'info');
+    immediateButton.click();
+    return {
+      stage: PAYPAL_HOSTED_STAGE_REVIEW,
+      submitted: true,
+    };
+  }
+
+  log(`PayPal hosted checkout 账单确认页：开始等待确认文案。当前 URL：${location.href}`, 'info');
   let waited = 0;
   while (waited < 30) {
     waited += 1;
@@ -673,11 +764,53 @@ async function clickHostedReviewConsent() {
   throw new Error('PayPal hosted checkout 账单确认页超时，未检测到目标文案。');
 }
 
+async function clickHostedGenericErrorCheckAccount() {
+  await waitForDocumentComplete();
+  const button = findPayPalCheckAccountButton();
+  if (!button || !isEnabledControl(button)) {
+    throw new Error('PayPal hosted checkout 错误页未找到 Check your Account 按钮。');
+  }
+  // PayPal 命中上一账号登录态时会把退出入口藏在账号检查页，
+  // 自动点击可以复用人工处理路径，让后续步骤继续等退出完成。
+  log(`PayPal hosted checkout 错误页：检测到 ${getPayPalHostedErrorCode() || '未知错误'}，正在进入账号检查页。当前 URL：${location.href}`, 'warn');
+  button.click();
+  return {
+    stage: PAYPAL_HOSTED_STAGE_GENERIC_ERROR,
+    submitted: true,
+    action: 'check_account',
+    errorCode: getPayPalHostedErrorCode(),
+  };
+}
+
+async function clickHostedAccountLogout() {
+  await waitForDocumentComplete();
+  const button = findPayPalLogoutButton();
+  if (!button || !isEnabledControl(button)) {
+    throw new Error('PayPal hosted checkout 账号检查页未找到 Log out 按钮。');
+  }
+  // 这里不直接清 cookie，是因为用户已验证 PayPal 页面内退出更稳定；
+  // 退出后后台循环会继续识别同一标签页的新状态。
+  log(`PayPal hosted checkout 账号检查页：正在退出上一个 PayPal 登录态。当前 URL：${location.href}`, 'warn');
+  button.click();
+  return {
+    stage: PAYPAL_HOSTED_STAGE_ACCOUNT_LOGOUT,
+    submitted: true,
+    action: 'logout',
+    errorCode: getPayPalHostedErrorCode(),
+  };
+}
+
 async function runHostedCheckoutStep(payload = {}) {
   if (isPayPalHostedReviewPage()) {
     return clickHostedReviewConsent();
   }
   const stage = detectPayPalHostedCheckoutStage();
+  if (stage === PAYPAL_HOSTED_STAGE_GENERIC_ERROR) {
+    return clickHostedGenericErrorCheckAccount();
+  }
+  if (stage === PAYPAL_HOSTED_STAGE_ACCOUNT_LOGOUT) {
+    return clickHostedAccountLogout();
+  }
   if (stage === PAYPAL_HOSTED_STAGE_VERIFICATION) {
     if (!payload.verificationCode && !payload.code) {
       return {
@@ -719,12 +852,12 @@ function scheduleHostedHermesAutoRun() {
   if (!shouldAutoRunHostedHermesReview()) {
     return;
   }
-  log(`PayPal Hermes 页面已命中，按油猴脚本方式自动等待并点击 Agree and Continue。当前 URL：${location.href}`, 'info');
+  log(`PayPal hosted checkout 账单确认页已命中，按油猴脚本方式自动等待并点击 Agree and Continue。当前 URL：${location.href}`, 'info');
   setTimeout(() => {
     clickHostedReviewConsent().then(() => {
-      log('PayPal Hermes：已按油猴脚本方式执行 Agree and Continue。', 'ok');
+      log('PayPal hosted checkout 账单确认页：已按油猴脚本方式执行 Agree and Continue。', 'ok');
     }).catch((error) => {
-      log(`PayPal Hermes：自动点击 Agree and Continue 失败：${error?.message || error}`, 'warn');
+      log(`PayPal hosted checkout 账单确认页：自动点击 Agree and Continue 失败：${error?.message || error}`, 'warn');
     });
   }, 0);
 }
@@ -944,6 +1077,9 @@ function inspectPayPalState() {
     hasEmailInput: Boolean(emailInput),
     hasPasswordInput: Boolean(passwordInput),
     hasHostedGuestCheckout: hostedStage === PAYPAL_HOSTED_STAGE_GUEST_CHECKOUT,
+    paypalHostedErrorCode: getPayPalHostedErrorCode(),
+    checkAccountReady: Boolean(findPayPalCheckAccountButton()),
+    logoutReady: Boolean(findPayPalLogoutButton()),
     verificationInputsVisible: hasHostedVerificationInputs(),
     reviewConsentReady: Boolean(findHostedReviewConsentButton()),
     approveReady: Boolean(approveButton && isEnabledControl(approveButton)),

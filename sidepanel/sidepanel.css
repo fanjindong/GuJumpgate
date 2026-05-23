@@ -5,7 +5,6 @@
    Themes: Light (default) + Dark (toggle)
    ============================================================ */
 
-#ip-proxy-section,
 #phone-verification-section {
   display: none !important;
 }
@@ -3558,6 +3557,10 @@ header {
   line-height: 1;
 }
 .toast-close:hover { opacity: 1; }
+
+.legacy-registration-config-hidden {
+  display: none !important;
+}
 
 @keyframes toastIn {
   from { opacity: 0; transform: translateY(-10px) scale(0.96); }
