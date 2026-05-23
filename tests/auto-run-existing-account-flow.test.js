@@ -107,12 +107,11 @@ vm.runInNewContext(capabilitiesSource, sandbox, { filename: capabilitiesPath });
 
 const registry = sandbox.MultiPageFlowCapabilities.createFlowCapabilityRegistry();
 const capabilityState = registry.resolveSidepanelCapabilities({
-  panelMode: 'sub2api',
+  panelMode: 'local-cpa-json',
   state: {
-    panelMode: 'sub2api',
-    plusModeEnabled: false,
-    phoneVerificationEnabled: true,
-    signupMethod: 'phone',
+    panelMode: 'local-cpa-json',
+    plusModeEnabled: true,
+    signupMethod: 'email',
   },
 });
 
@@ -129,23 +128,20 @@ assert.strictEqual(capabilityState.stepDefinitionOptions.signupMethod, 'email');
 
 const modeValidation = registry.validateModeSwitch({
   state: {
-    plusModeEnabled: false,
-    phoneVerificationEnabled: true,
-    signupMethod: 'phone',
+    plusModeEnabled: true,
+    signupMethod: 'email',
   },
-  changedKeys: ['plusModeEnabled', 'phoneVerificationEnabled', 'signupMethod'],
+  changedKeys: ['plusModeEnabled', 'signupMethod'],
 });
 assert.strictEqual(modeValidation.normalizedUpdates.plusModeEnabled, true);
-assert.strictEqual(modeValidation.normalizedUpdates.phoneVerificationEnabled, false);
 assert.strictEqual(modeValidation.normalizedUpdates.signupMethod, 'email');
-assert.strictEqual(registry.resolveSignupMethod({ signupMethod: 'phone' }), 'email');
-assert.strictEqual(registry.canUsePhoneSignup({ phoneVerificationEnabled: true, signupMethod: 'phone' }), false);
+assert.strictEqual(registry.resolveSignupMethod({ signupMethod: 'email' }), 'email');
+assert.strictEqual(registry.canUsePhoneSignup({ signupMethod: 'email' }), false);
 
 const startValidation = registry.validateAutoRunStart({
   state: {
-    plusModeEnabled: false,
-    phoneVerificationEnabled: true,
-    signupMethod: 'phone',
+    plusModeEnabled: true,
+    signupMethod: 'email',
   },
 });
 assert.strictEqual(startValidation.ok, true);

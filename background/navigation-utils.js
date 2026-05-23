@@ -48,13 +48,7 @@
       if (state.panelMode === 'local-cpa-json-no-rt') {
         return 'local-cpa-json-no-rt';
       }
-      if (state.panelMode === 'sub2api') {
-        return 'sub2api';
-      }
-      if (state.panelMode === 'codex2api') {
-        return 'codex2api';
-      }
-      return 'cpa';
+      return 'local-cpa-json';
     }
 
     function getPanelModeLabel(modeOrState) {
@@ -65,13 +59,7 @@
       if (mode === 'local-cpa-json-no-rt') {
         return '本地CPA JSON 无RT';
       }
-      if (mode === 'sub2api') {
-        return 'SUB2API';
-      }
-      if (mode === 'codex2api') {
-        return 'Codex2API';
-      }
-      return 'CPA';
+      return '本地CPA JSON 有RT';
     }
 
     function isSignupPageHost(hostname = '') {
@@ -159,26 +147,6 @@
             && candidate.pathname.startsWith('/m/');
         case 'mail-2925':
           return candidate.hostname === '2925.com' || candidate.hostname === 'www.2925.com';
-        case 'vps-panel':
-          return Boolean(reference)
-            && candidate.origin === reference.origin
-            && candidate.pathname === reference.pathname;
-        case 'sub2api-panel':
-          return Boolean(reference)
-            && candidate.origin === reference.origin
-            && (
-              candidate.pathname.startsWith('/admin/accounts')
-              || candidate.pathname.startsWith('/login')
-              || candidate.pathname === '/'
-            );
-        case 'codex2api-panel':
-          return Boolean(reference)
-            && candidate.origin === reference.origin
-            && (
-              candidate.pathname.startsWith('/admin/accounts')
-              || candidate.pathname === '/admin'
-              || candidate.pathname === '/'
-            );
         default:
           return false;
       }

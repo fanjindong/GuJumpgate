@@ -53,41 +53,8 @@
         "content/utils.js",
         "content/operation-delay.js",
         "content/auth-page-recovery.js",
-        "content/phone-country-utils.js",
-        "content/phone-auth.js",
         "content/signup-page.js"
       ],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://mail.qq.com/*",
-        "https://wx.mail.qq.com/*"
-      ],
-      "js": [
-        "content/activation-utils.js",
-        "shared/source-registry.js",
-        "content/utils.js",
-        "content/qq-mail.js"
-      ],
-      "all_frames": true,
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://mail.163.com/*",
-        "https://*.mail.163.com/*",
-        "https://webmail.vip.163.com/*",
-        "https://mail.126.com/*",
-        "https://*.mail.126.com/*"
-      ],
-      "js": [
-        "content/activation-utils.js",
-        "shared/source-registry.js",
-        "content/utils.js",
-        "content/mail-163.js"
-      ],
-      "all_frames": true,
       "run_at": "document_idle"
     },
     {
@@ -102,19 +69,6 @@
         "content/icloud-mail.js"
       ],
       "all_frames": true,
-      "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://duckduckgo.com/email/settings/autofill*"
-      ],
-      "js": [
-        "content/activation-utils.js",
-        "shared/source-registry.js",
-        "content/utils.js",
-        "content/operation-delay.js",
-        "content/duck-mail.js"
-      ],
       "run_at": "document_idle"
     },
     {

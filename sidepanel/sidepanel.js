@@ -44,11 +44,6 @@
     btnIgnoreRelease: byId('btn-ignore-release'),
     btnOpenRelease: byId('btn-open-release'),
     settingsCard: byId('settings-card'),
-    btnContributionMode: byId('btn-contribution-mode'),
-    contributionUpdateLayer: byId('contribution-update-layer'),
-    contributionUpdateHint: byId('contribution-update-hint'),
-    contributionUpdateHintText: byId('contribution-update-hint-text'),
-    btnDismissContributionUpdateHint: byId('btn-dismiss-contribution-update-hint'),
     stepsProgress: byId('steps-progress'),
     btnAutoRun: byId('btn-auto-run'),
     btnAutoContinue: byId('btn-auto-continue'),
@@ -1086,13 +1081,6 @@
   }
 
   function bindToolActions() {
-    elements.btnContributionMode?.addEventListener('click', () => {
-      openExternalUrl('https://github.com/FoundZiGu/GuJumpgate/blob/main/docs/%E4%BD%BF%E7%94%A8%E6%95%99%E7%A8%8B/%E4%BD%BF%E7%94%A8%E6%95%99%E7%A8%8B.md');
-    });
-    elements.btnDismissContributionUpdateHint?.addEventListener('click', () => {
-      elements.contributionUpdateHint.hidden = true;
-      elements.contributionUpdateLayer.hidden = true;
-    });
     elements.btnGpcHelperBalance?.addEventListener('click', async () => {
       try {
         elements.btnGpcHelperBalance.disabled = true;

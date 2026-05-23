@@ -66,9 +66,7 @@
         if (capabilityRegistry?.canUsePhoneSignup) {
           return capabilityRegistry.canUsePhoneSignup(state);
         }
-        return Boolean(state?.phoneVerificationEnabled)
-          && !Boolean(state?.plusModeEnabled)
-          && !Boolean(state?.contributionMode);
+        return false;
       },
       resolveSignupMethod = (state = {}) => {
         const method = normalizeSignupMethod(state?.signupMethod);
@@ -148,7 +146,6 @@
       notifyNodeError,
       patchMail2925Account,
       patchHotmailAccount,
-      pollContributionStatus,
       registerTab,
       requestStop,
       probeIpProxyExit,
@@ -162,7 +159,6 @@
       setCurrentPayPalAccount,
       setCurrentMail2925Account,
       setCurrentHotmailAccount,
-      setContributionMode,
       setEmailState,
       setEmailStateSilently,
       persistRegistrationEmailState,
@@ -180,7 +176,6 @@
       skipAutoRunCountdown,
       skipNode,
       sanitizeDataUpdatePayloadForBroadcast = (payload) => payload,
-      startContributionFlow,
       startAutoRunLoop,
       deleteMail2925Account,
       deleteMail2925Accounts,
@@ -1148,70 +1143,6 @@
           return await setFreeReusablePhoneActivation(message.payload || {});
         }
 
-        case 'SET_CONTRIBUTION_MODE': {
-          const enabled = Boolean(message.payload?.enabled);
-          const state = await ensureManualInteractionAllowed(enabled ? '进入贡献模式' : '退出贡献模式');
-          if (Object.values(state.nodeStatuses || {}).some((status) => status === 'running')) {
-            throw new Error(enabled ? '当前有步骤正在执行，无法进入贡献模式。' : '当前有步骤正在执行，无法退出贡献模式。');
-          }
-          if (typeof setContributionMode !== 'function') {
-            throw new Error('贡献模式切换能力未接入。');
-          }
-          return {
-            ok: true,
-            state: await setContributionMode(enabled),
-          };
-        }
-
-        case 'START_CONTRIBUTION_FLOW': {
-          const state = await ensureManualInteractionAllowed('开始贡献');
-          if (Object.values(state.nodeStatuses || {}).some((status) => status === 'running')) {
-            throw new Error('当前有步骤正在执行，无法开始贡献流程。');
-          }
-          if (typeof startContributionFlow !== 'function') {
-            throw new Error('贡献 OAuth 流程尚未接入。');
-          }
-          return {
-            ok: true,
-            state: await startContributionFlow({
-              nickname: message.payload?.nickname,
-              qq: message.payload?.qq,
-            }),
-          };
-        }
-
-        case 'SET_CONTRIBUTION_PROFILE': {
-          const state = await getState();
-          if (!state?.contributionMode) {
-            throw new Error('请先进入贡献模式。');
-          }
-          const nickname = String(message.payload?.nickname || '').trim();
-          const qq = String(message.payload?.qq || '').trim();
-          if (qq && !/^\d{1,20}$/.test(qq)) {
-            throw new Error('QQ 只能填写数字，且长度不能超过 20 位。');
-          }
-          await setState({
-            contributionNickname: nickname,
-            contributionQq: qq,
-          });
-          return {
-            ok: true,
-            state: await getState(),
-          };
-        }
-
-        case 'POLL_CONTRIBUTION_STATUS': {
-          if (typeof pollContributionStatus !== 'function') {
-            throw new Error('贡献状态轮询能力尚未接入。');
-          }
-          return {
-            ok: true,
-            state: await pollContributionStatus({
-              reason: message.payload?.reason || 'sidepanel_poll',
-            }),
-          };
-        }
-
         case 'CLEAR_ACCOUNT_RUN_HISTORY': {
           const state = await getState();
           if (isAutoRunLockedState(state)) {
@@ -1284,17 +1215,6 @@
           if (message.source === 'sidepanel') {
             await lockAutomationWindowFromMessage(message, sender);
           }
-          if (Boolean(message.payload?.contributionMode) && typeof setContributionMode === 'function') {
-            await setContributionMode(true);
-            if (typeof setState === 'function') {
-              const contributionNickname = String(message.payload?.contributionNickname || '').trim();
-              const contributionQq = String(message.payload?.contributionQq || '').trim();
-              await setState({
-                contributionNickname,
-                contributionQq,
-              });
-            }
-          }
           const state = await syncExistingAccountSettingsForStart(message.payload || {});
           const autoRunStartValidation = validateAutoRunStart(state, { state });
           if (autoRunStartValidation?.ok === false) {
@@ -1315,17 +1235,6 @@
           clearStopRequest();
           if (message.source === 'sidepanel') {
             await lockAutomationWindowFromMessage(message, sender);
-          }
-          if (Boolean(message.payload?.contributionMode) && typeof setContributionMode === 'function') {
-            await setContributionMode(true);
-            if (typeof setState === 'function') {
-              const contributionNickname = String(message.payload?.contributionNickname || '').trim();
-              const contributionQq = String(message.payload?.contributionQq || '').trim();
-              await setState({
-                contributionNickname,
-                contributionQq,
-              });
-            }
           }
           const state = await syncExistingAccountSettingsForStart(message.payload || {});
           const autoRunStartValidation = validateAutoRunStart(state, { state });
@@ -1434,7 +1343,6 @@
             || Object.prototype.hasOwnProperty.call(updates, 'signupMethod')
             || Object.prototype.hasOwnProperty.call(updates, 'panelMode')
             || Object.prototype.hasOwnProperty.call(updates, 'activeFlowId')
-            || Object.prototype.hasOwnProperty.call(updates, 'contributionMode')
           ) {
             updates.signupMethod = resolveSignupMethod(nextSignupState);
           }
@@ -1449,14 +1357,11 @@
           const plusPaymentChanged = Object.prototype.hasOwnProperty.call(updates, 'plusPaymentMethod')
             && normalizePlusPaymentMethodForDisplay(currentState?.plusPaymentMethod || 'paypal')
               !== normalizePlusPaymentMethodForDisplay(updates.plusPaymentMethod || 'paypal');
-          const phoneSignupReloginAfterBindEmailChanged = Object.prototype.hasOwnProperty.call(updates, 'phoneSignupReloginAfterBindEmailEnabled')
-            && Boolean(currentState?.phoneSignupReloginAfterBindEmailEnabled) !== Boolean(updates.phoneSignupReloginAfterBindEmailEnabled);
           const nextPlusModeEnabled = Object.prototype.hasOwnProperty.call(updates, 'plusModeEnabled')
             ? Boolean(updates.plusModeEnabled)
             : Boolean(currentState?.plusModeEnabled);
           const stepModeChanged = modeChanged
-            || (nextPlusModeEnabled && plusPaymentChanged)
-            || phoneSignupReloginAfterBindEmailChanged;
+            || (nextPlusModeEnabled && plusPaymentChanged);
           const oauthFlowTimeoutDisabled = Object.prototype.hasOwnProperty.call(updates, 'oauthFlowTimeoutEnabled')
             && updates.oauthFlowTimeoutEnabled === false;
           await setPersistentSettings(updates);
@@ -1524,9 +1429,6 @@
               reason: 'apply_failed',
               error: error?.message || String(error || '代理应用失败'),
             }));
-          }
-          if (Boolean(currentState?.contributionMode) && typeof setContributionMode === 'function') {
-            await setContributionMode(true);
           }
           if (Object.keys(stateUpdates).length > 0 && typeof broadcastDataUpdate === 'function') {
             broadcastDataUpdate(sanitizeDataUpdatePayloadForBroadcast(stateUpdates));

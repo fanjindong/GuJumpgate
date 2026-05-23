@@ -24,105 +24,6 @@
       driverId: null,
       cleanupScopes: [],
     },
-    'qq-mail': {
-      flowId: null,
-      kind: 'mail-provider',
-      label: 'QQ 邮箱',
-      readyPolicy: 'top-frame-only',
-      family: 'qq-mail-family',
-      driverId: 'content/qq-mail',
-      cleanupScopes: [],
-    },
-    'mail-163': {
-      flowId: null,
-      kind: 'mail-provider',
-      label: '163 邮箱',
-      readyPolicy: 'top-frame-only',
-      family: 'mail-163-family',
-      driverId: 'content/mail-163',
-      cleanupScopes: [],
-    },
-    'gmail-mail': {
-      flowId: null,
-      kind: 'mail-provider',
-      label: 'Gmail 邮箱',
-      readyPolicy: 'top-frame-only',
-      family: 'gmail-mail-family',
-      driverId: 'content/gmail-mail',
-      cleanupScopes: [],
-    },
-    'icloud-mail': {
-      flowId: null,
-      kind: 'mail-provider',
-      label: 'iCloud 邮箱',
-      readyPolicy: 'allow-child-frame',
-      family: 'icloud-mail-family',
-      driverId: 'content/icloud-mail',
-      cleanupScopes: [],
-    },
-    'inbucket-mail': {
-      flowId: null,
-      kind: 'mail-provider',
-      label: 'Inbucket 邮箱',
-      readyPolicy: 'top-frame-only',
-      family: 'inbucket-mail-family',
-      driverId: 'content/inbucket-mail',
-      cleanupScopes: [],
-    },
-    'mail-2925': {
-      flowId: null,
-      kind: 'mail-provider',
-      label: '2925 邮箱',
-      readyPolicy: 'top-frame-only',
-      family: 'mail-2925-family',
-      driverId: 'content/mail-2925',
-      cleanupScopes: [],
-    },
-    'duck-mail': {
-      flowId: null,
-      kind: 'mail-provider',
-      label: 'Duck 邮箱',
-      readyPolicy: 'allow-child-frame',
-      family: 'duck-mail-family',
-      driverId: 'content/duck-mail',
-      cleanupScopes: [],
-    },
-    'vps-panel': {
-      flowId: 'openai',
-      kind: 'panel-page',
-      label: 'CPA 面板',
-      readyPolicy: 'allow-child-frame',
-      family: 'vps-panel-family',
-      driverId: 'content/vps-panel',
-      cleanupScopes: [],
-    },
-    'platform-panel': {
-      flowId: 'openai',
-      kind: 'virtual-page',
-      label: '平台回调面板',
-      readyPolicy: 'disabled',
-      family: 'platform-panel-family',
-      driverId: 'content/platform-panel',
-      cleanupScopes: [],
-    },
-    'sub2api-panel': {
-      flowId: 'openai',
-      kind: 'panel-page',
-      label: 'SUB2API 后台',
-      readyPolicy: 'allow-child-frame',
-      family: 'sub2api-panel-family',
-      driverId: 'content/sub2api-panel',
-      cleanupScopes: [],
-    },
-    'codex2api-panel': {
-      flowId: 'openai',
-      kind: 'panel-page',
-      label: 'Codex2API 后台',
-      readyPolicy: 'allow-child-frame',
-      family: 'codex2api-panel-family',
-      driverId: 'content/sub2api-panel',
-      cleanupScopes: [],
-    },
     'plus-checkout': {
       flowId: 'openai',
       kind: 'flow-page',
@@ -165,53 +66,11 @@
     'content/signup-page': {
       sourceId: 'openai-auth',
       commands: [
-        'submit-signup-email',
-        'fill-password',
-        'fill-profile',
         'oauth-login',
-        'submit-verification-code',
-        'post-login-phone-verification',
-        'bind-email',
-        'fetch-bind-email-code',
+        'fetch-login-code',
         'confirm-oauth',
         'detect-auth-state',
       ],
-    },
-    'content/qq-mail': {
-      sourceId: 'qq-mail',
-      commands: ['POLL_EMAIL'],
-    },
-    'content/mail-163': {
-      sourceId: 'mail-163',
-      commands: ['POLL_EMAIL'],
-    },
-    'content/gmail-mail': {
-      sourceId: 'gmail-mail',
-      commands: ['POLL_EMAIL'],
-    },
-    'content/icloud-mail': {
-      sourceId: 'icloud-mail',
-      commands: ['POLL_EMAIL'],
-    },
-    'content/mail-2925': {
-      sourceId: 'mail-2925',
-      commands: ['POLL_EMAIL'],
-    },
-    'content/duck-mail': {
-      sourceId: 'duck-mail',
-      commands: ['FETCH_ALIAS_EMAIL'],
-    },
-    'content/sub2api-panel': {
-      sourceId: 'sub2api-panel',
-      commands: ['open-panel', 'fetch-oauth-url', 'platform-verify'],
-    },
-    'content/vps-panel': {
-      sourceId: 'vps-panel',
-      commands: ['open-panel', 'fetch-oauth-url', 'platform-verify'],
-    },
-    'content/platform-panel': {
-      sourceId: 'platform-panel',
-      commands: ['platform-verify', 'fetch-oauth-url'],
     },
     'content/plus-checkout': {
       sourceId: 'plus-checkout',
@@ -233,14 +92,7 @@
 
   const AUTH_PAGE_HOSTS = new Set(['auth0.openai.com', 'auth.openai.com', 'accounts.openai.com']);
   const ENTRY_PAGE_HOSTS = new Set(['chatgpt.com', 'www.chatgpt.com', 'chat.openai.com']);
-  const CHILD_FRAME_BLOCKED_SOURCES = new Set([
-    'qq-mail',
-    'mail-163',
-    'gmail-mail',
-    'mail-2925',
-    'inbucket-mail',
-    'plus-checkout',
-  ]);
+  const CHILD_FRAME_BLOCKED_SOURCES = new Set(['plus-checkout']);
 
   function createSourceRegistry() {
     function parseUrlSafely(rawUrl) {
@@ -329,67 +181,19 @@
       return ENTRY_PAGE_HOSTS.has(String(hostname || '').toLowerCase());
     }
 
-    function is163MailHost(hostname = '') {
-      const normalized = String(hostname || '').toLowerCase();
-      return normalized === 'mail.163.com'
-        || normalized.endsWith('.mail.163.com')
-        || normalized === 'mail.126.com'
-        || normalized.endsWith('.mail.126.com')
-        || normalized === 'webmail.vip.163.com';
-    }
-
-    function matchesSourceUrlFamily(source, candidateUrl, referenceUrl) {
+    function matchesSourceUrlFamily(source, candidateUrl) {
       const candidate = parseUrlSafely(candidateUrl);
       if (!candidate) return false;
-
       const canonical = resolveCanonicalSource(source);
-      const reference = parseUrlSafely(referenceUrl);
-
       switch (canonical) {
         case 'openai-auth':
           return isSignupPageHost(candidate.hostname) || isSignupEntryHost(candidate.hostname);
         case 'chatgpt':
           return isSignupEntryHost(candidate.hostname);
-        case 'duck-mail':
-          return candidate.hostname === 'duckduckgo.com' && candidate.pathname.startsWith('/email/');
-        case 'qq-mail':
-          return candidate.hostname === 'mail.qq.com' || candidate.hostname === 'wx.mail.qq.com';
-        case 'mail-163':
-          return is163MailHost(candidate.hostname);
-        case 'gmail-mail':
-          return candidate.hostname === 'mail.google.com';
-        case 'icloud-mail':
-          return candidate.hostname === 'www.icloud.com'
-            || candidate.hostname === 'www.icloud.com.cn';
-        case 'inbucket-mail':
-          return Boolean(reference)
-            && candidate.origin === reference.origin
-            && candidate.pathname.startsWith('/m/');
-        case 'mail-2925':
-          return candidate.hostname === '2925.com' || candidate.hostname === 'www.2925.com';
-        case 'vps-panel':
-          return Boolean(reference)
-            && candidate.origin === reference.origin
-            && candidate.pathname === reference.pathname;
-        case 'sub2api-panel':
-          return Boolean(reference)
-            && candidate.origin === reference.origin
-            && (
-              candidate.pathname.startsWith('/admin/accounts')
-              || candidate.pathname.startsWith('/login')
-              || candidate.pathname === '/'
-            );
-        case 'codex2api-panel':
-          return Boolean(reference)
-            && candidate.origin === reference.origin
-            && (
-              candidate.pathname.startsWith('/admin/accounts')
-              || candidate.pathname === '/admin'
-              || candidate.pathname === '/'
-            );
         case 'plus-checkout':
-          return candidate.hostname === 'chatgpt.com'
-            && candidate.pathname.startsWith('/checkout/');
+          return (candidate.hostname === 'chatgpt.com' && candidate.pathname.startsWith('/checkout/'))
+            || candidate.hostname === 'pay.openai.com'
+            || candidate.hostname === 'checkout.stripe.com';
         case 'paypal-flow':
           return candidate.hostname.endsWith('paypal.com');
         case 'gopay-flow':
@@ -405,19 +209,13 @@
       hostname = '',
     } = {}) {
       if (injectedSource) return resolveCanonicalSource(injectedSource);
-
       const normalizedHostname = String(hostname || '').toLowerCase();
       const normalizedUrl = String(url || '');
-
       if (isSignupPageHost(normalizedHostname)) return 'openai-auth';
-      if (normalizedHostname === 'mail.qq.com' || normalizedHostname === 'wx.mail.qq.com') return 'qq-mail';
-      if (is163MailHost(normalizedHostname)) return 'mail-163';
-      if (normalizedHostname === 'mail.google.com') return 'gmail-mail';
-      if (normalizedHostname === 'www.icloud.com' || normalizedHostname === 'www.icloud.com.cn') return 'icloud-mail';
-      if (normalizedUrl.includes('duckduckgo.com/email/settings/autofill')) return 'duck-mail';
-      if (normalizedUrl.includes('2925.com')) return 'mail-2925';
       if (normalizedHostname === 'pay.openai.com' || normalizedHostname === 'checkout.stripe.com') return 'plus-checkout';
       if (normalizedHostname === 'www.paypal.com' || normalizedHostname === 'paypal.com') return 'paypal-flow';
+      if (/gopay|gojek/i.test(normalizedHostname)) return 'gopay-flow';
+      if (normalizedUrl.includes('/checkout/')) return 'plus-checkout';
       if (isSignupEntryHost(normalizedHostname)) return 'chatgpt';
       return 'unknown-source';
     }
@@ -428,28 +226,23 @@
       if (readyPolicy === 'disabled') return false;
       if (!isChildFrame) return true;
       if (readyPolicy === 'top-frame-only') return false;
-      if (CHILD_FRAME_BLOCKED_SOURCES.has(canonical)) return false;
-      return true;
+      return !CHILD_FRAME_BLOCKED_SOURCES.has(canonical);
     }
 
-    function getCleanupOwnerSource(cleanupScope) {
-      return resolveCanonicalSource(CLEANUP_SCOPE_OWNERS[String(cleanupScope || '').trim()] || '');
+    function getCleanupOwner(scope) {
+      return CLEANUP_SCOPE_OWNERS[String(scope || '').trim()] || '';
     }
 
     return {
       detectSourceFromLocation,
-      getCleanupOwnerSource,
+      driverAcceptsCommand,
+      getCleanupOwner,
       getDriverIdForSource,
       getDriverMeta,
-      driverAcceptsCommand,
       getSourceKeys,
       getSourceLabel,
       getSourceMeta,
-      is163MailHost,
-      isSignupEntryHost,
-      isSignupPageHost,
       matchesSourceUrlFamily,
-      parseUrlSafely,
       resolveCanonicalSource,
       shouldReportReadyForFrame,
     };
@@ -457,5 +250,8 @@
 
   return {
     createSourceRegistry,
+    SOURCE_ALIASES,
+    SOURCE_DEFINITIONS,
+    DRIVER_DEFINITIONS,
   };
 });

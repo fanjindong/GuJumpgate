@@ -10,7 +10,6 @@
   }
 })(typeof self !== 'undefined' ? self : globalThis, function createMailProviderUtils() {
   const HOTMAIL_PROVIDER = 'hotmail-api';
-  const GMAIL_PROVIDER = 'gmail';
   const NETEASE_LIST_PATH = '/js6/main.jsp?df=mail163_letter#module=mbox.ListModule%7C%7B%22fid%22%3A1%2C%22order%22%3A%22date%22%2C%22desc%22%3Atrue%7D';
   const ICLOUD_TARGET_MAILBOX_TYPE_INBOX = 'icloud-inbox';
   const ICLOUD_TARGET_MAILBOX_TYPE_FORWARD = 'forward-mailbox';
@@ -19,7 +18,6 @@
     { value: '163', label: '163 邮箱' },
     { value: '163-vip', label: '163 VIP 邮箱' },
     { value: '126', label: '126 邮箱' },
-    { value: GMAIL_PROVIDER, label: 'Gmail 邮箱' },
   ];
 
   function normalizeMailProvider(value = '') {
@@ -56,16 +54,6 @@
 
   function getIcloudForwardMailConfig(provider = 'qq') {
     const normalizedProvider = normalizeIcloudForwardMailProvider(provider);
-    if (normalizedProvider === GMAIL_PROVIDER) {
-      return {
-        source: 'gmail-mail',
-        url: 'https://mail.google.com/mail/u/0/#inbox',
-        label: 'Gmail 邮箱',
-        inject: ['content/activation-utils.js', 'content/utils.js', 'content/gmail-mail.js'],
-        injectSource: 'gmail-mail',
-      };
-    }
-
     return getMailProviderConfig({ mailProvider: normalizedProvider });
   }
 
@@ -97,29 +85,10 @@
         label: '126 邮箱',
       };
     }
-    if (provider === 'inbucket') {
-      const host = normalizeInbucketOrigin(state.inbucketHost);
-      const mailbox = String(state.inbucketMailbox || '').trim();
-      if (!host) {
-        return { error: 'Inbucket 主机地址为空或无效。' };
-      }
-      if (!mailbox) {
-        return { error: 'Inbucket 邮箱名称为空。' };
-      }
-      return {
-        source: 'inbucket-mail',
-        url: `${host}/m/${encodeURIComponent(mailbox)}/`,
-        label: `Inbucket 邮箱（${mailbox}）`,
-        navigateOnReuse: true,
-        inject: ['content/activation-utils.js', 'content/utils.js', 'content/inbucket-mail.js'],
-        injectSource: 'inbucket-mail',
-      };
-    }
     return { source: 'qq-mail', url: 'https://wx.mail.qq.com/', label: 'QQ 邮箱' };
   }
 
   return {
-    GMAIL_PROVIDER,
     HOTMAIL_PROVIDER,
     getIcloudForwardMailConfig,
     getIcloudForwardMailProviderOptions,

@@ -3,39 +3,24 @@
 })(typeof self !== 'undefined' ? self : globalThis, function createFlowCapabilitiesModule() {
   const DEFAULT_FLOW_ID = 'openai';
   const DEFAULT_PANEL_MODE = 'local-cpa-json';
-  const LOCAL_CPA_JSON_NO_RT_PANEL_MODE = 'local-cpa-json-no-rt';
   const SIGNUP_METHOD_EMAIL = 'email';
-  const SIGNUP_METHOD_PHONE = 'phone';
   const PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH = 'oauth';
-  const PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION = 'sub2api_codex_session';
-  const PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION = 'cpa_codex_session';
-  const VALID_PANEL_MODES = Object.freeze(['local-cpa-json', LOCAL_CPA_JSON_NO_RT_PANEL_MODE, 'cpa', 'sub2api', 'codex2api']);
 
   const DEFAULT_FLOW_CAPABILITIES = Object.freeze({
-    supportsEmailSignup: true,
+    supportsEmailSignup: false,
     supportsPhoneSignup: false,
     supportsPhoneVerificationSettings: false,
     supportsPlusMode: true,
     supportsContributionMode: false,
-    supportsPlatformBinding: [],
+    supportsPlatformBinding: Object.freeze([DEFAULT_PANEL_MODE]),
     supportsLuckmail: false,
     supportsOauthTimeoutBudget: false,
     canSwitchFlow: false,
-    stepDefinitionMode: 'default',
+    stepDefinitionMode: 'openai-existing-account-plus',
   });
 
   const FLOW_CAPABILITIES = Object.freeze({
-    openai: Object.freeze({
-      ...DEFAULT_FLOW_CAPABILITIES,
-      supportsPhoneSignup: false,
-      supportsPhoneVerificationSettings: false,
-      supportsPlusMode: true,
-      supportsContributionMode: false,
-      supportsPlatformBinding: ['local-cpa-json'],
-      supportsLuckmail: false,
-      supportsOauthTimeoutBudget: false,
-      stepDefinitionMode: 'openai-dynamic',
-    }),
+    openai: Object.freeze({ ...DEFAULT_FLOW_CAPABILITIES }),
   });
 
   const DEFAULT_PANEL_CAPABILITIES = Object.freeze({
@@ -43,199 +28,53 @@
     requiresPhoneSignupWarning: false,
     supportedPlusAccountAccessStrategies: Object.freeze([PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH]),
   });
-  const MODE_SWITCH_RELEVANT_KEYS = Object.freeze([
-    'activeFlowId',
-    'contributionMode',
-    'panelMode',
-    'phoneVerificationEnabled',
-    'plusAccountAccessStrategy',
-    'plusModeEnabled',
-    'signupMethod',
-  ]);
 
   const PANEL_CAPABILITIES = Object.freeze({
-    cpa: Object.freeze({
-      supportsPhoneSignup: false,
-      requiresPhoneSignupWarning: true,
-      supportedPlusAccountAccessStrategies: Object.freeze([
-        PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
-        PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
-      ]),
-    }),
-    'local-cpa-json': Object.freeze({
-      supportsPhoneSignup: false,
-      requiresPhoneSignupWarning: false,
-    }),
-    [LOCAL_CPA_JSON_NO_RT_PANEL_MODE]: Object.freeze({
-      supportsPhoneSignup: false,
-      requiresPhoneSignupWarning: false,
-    }),
-    sub2api: Object.freeze({
-      supportsPhoneSignup: false,
-      requiresPhoneSignupWarning: false,
-      supportedPlusAccountAccessStrategies: Object.freeze([
-        PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
-        PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION,
-      ]),
-    }),
-    codex2api: Object.freeze({
-      supportsPhoneSignup: false,
-      requiresPhoneSignupWarning: false,
-    }),
+    [DEFAULT_PANEL_MODE]: Object.freeze({ ...DEFAULT_PANEL_CAPABILITIES }),
   });
 
   function normalizeFlowId(value = '', fallback = DEFAULT_FLOW_ID) {
     const normalized = String(value || '').trim().toLowerCase();
-    if (normalized) {
+    if (normalized && Object.prototype.hasOwnProperty.call(FLOW_CAPABILITIES, normalized)) {
       return normalized;
     }
     const fallbackValue = String(fallback || '').trim().toLowerCase();
-    return fallbackValue || DEFAULT_FLOW_ID;
+    return Object.prototype.hasOwnProperty.call(FLOW_CAPABILITIES, fallbackValue)
+      ? fallbackValue
+      : DEFAULT_FLOW_ID;
   }
 
-  function normalizePanelMode(value = '', fallback = DEFAULT_PANEL_MODE) {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (VALID_PANEL_MODES.includes(normalized)) {
-      return normalized;
-    }
-    const fallbackValue = String(fallback || '').trim().toLowerCase();
-    return VALID_PANEL_MODES.includes(fallbackValue) ? fallbackValue : DEFAULT_PANEL_MODE;
+  function normalizePanelMode() {
+    return DEFAULT_PANEL_MODE;
   }
 
-  function normalizeSignupMethod(value = '') {
-    return String(value || '').trim().toLowerCase() === SIGNUP_METHOD_PHONE
-      ? SIGNUP_METHOD_PHONE
-      : SIGNUP_METHOD_EMAIL;
+  function normalizeSignupMethod() {
+    return SIGNUP_METHOD_EMAIL;
   }
 
-  function normalizePlusAccountAccessStrategy(value = '') {
-    const normalized = String(value || '').trim().toLowerCase();
-    if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION) {
-      return PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION;
-    }
-    if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION) {
-      return PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION;
-    }
+  function normalizePlusAccountAccessStrategy() {
     return PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH;
-  }
-
-  function getPlusAccountSessionStrategyForPanel(panelMode = '') {
-    const normalizedPanelMode = normalizePanelMode(panelMode);
-    if (normalizedPanelMode === 'sub2api') {
-      return PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION;
-    }
-    if (normalizedPanelMode === 'cpa') {
-      return PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION;
-    }
-    return PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH;
-  }
-
-  function normalizePlusAccountAccessStrategyForPanel(value = '', panelMode = '') {
-    const normalized = normalizePlusAccountAccessStrategy(value);
-    if (
-      normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION
-      || normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION
-    ) {
-      return getPlusAccountSessionStrategyForPanel(panelMode);
-    }
-    return normalized;
-  }
-
-  function normalizePanelModeList(values = []) {
-    if (!Array.isArray(values)) {
-      return [];
-    }
-    const seen = new Set();
-    const normalized = [];
-    values.forEach((value) => {
-      const mode = normalizePanelMode(value, '');
-      if (!mode || seen.has(mode)) {
-        return;
-      }
-      seen.add(mode);
-      normalized.push(mode);
-    });
-    return normalized;
-  }
-
-  function getPanelModeLabel(panelMode = '') {
-    const normalized = normalizePanelMode(panelMode);
-    if (normalized === 'local-cpa-json') {
-      return '本地CPA JSON 有RT';
-    }
-    if (normalized === LOCAL_CPA_JSON_NO_RT_PANEL_MODE) {
-      return '本地CPA JSON 无RT';
-    }
-    if (normalized === 'sub2api') {
-      return 'SUB2API';
-    }
-    if (normalized === 'codex2api') {
-      return 'Codex2API';
-    }
-    return 'CPA';
   }
 
   function createFlowCapabilityRegistry(deps = {}) {
-    const {
-      defaultFlowCapabilities = DEFAULT_FLOW_CAPABILITIES,
-      defaultFlowId = DEFAULT_FLOW_ID,
-      defaultPanelCapabilities = DEFAULT_PANEL_CAPABILITIES,
-      flowCapabilities = FLOW_CAPABILITIES,
-      panelCapabilities = PANEL_CAPABILITIES,
-    } = deps;
+    const defaultFlowId = deps.defaultFlowId || DEFAULT_FLOW_ID;
 
     function getFlowCapabilities(flowId) {
       const normalizedFlowId = normalizeFlowId(flowId, defaultFlowId);
-      const entry = flowCapabilities[normalizedFlowId] || null;
       return {
-        ...defaultFlowCapabilities,
-        ...(entry || {}),
-        supportsPlatformBinding: normalizePanelModeList(entry?.supportsPlatformBinding || defaultFlowCapabilities.supportsPlatformBinding),
+        ...DEFAULT_FLOW_CAPABILITIES,
+        ...(FLOW_CAPABILITIES[normalizedFlowId] || {}),
       };
     }
 
-    function getPanelCapabilities(panelMode) {
-      const normalizedPanelMode = normalizePanelMode(panelMode);
-      return {
-        ...defaultPanelCapabilities,
-        ...(panelCapabilities[normalizedPanelMode] || {}),
-      };
-    }
-
-    function normalizeChangedKeys(values = []) {
-      const list = Array.isArray(values) ? values : [];
-      const seen = new Set();
-      const normalized = [];
-      list.forEach((value) => {
-        const key = String(value || '').trim();
-        if (!key || seen.has(key)) {
-          return;
-        }
-        seen.add(key);
-        normalized.push(key);
-      });
-      return normalized;
+    function getPanelCapabilities() {
+      return { ...DEFAULT_PANEL_CAPABILITIES };
     }
 
     function resolveSidepanelCapabilities(options = {}) {
       const state = options?.state || {};
-      const activeFlowId = normalizeFlowId(
-        options?.activeFlowId ?? state?.activeFlowId,
-        defaultFlowId
-      );
-      const flowState = getFlowCapabilities(activeFlowId);
-      const requestedPanelMode = normalizePanelMode(
-        options?.panelMode ?? state?.panelMode,
-        DEFAULT_PANEL_MODE
-      );
-      const supportedPanelModes = normalizePanelModeList(flowState.supportsPlatformBinding);
-      const panelModeSupported = supportedPanelModes.length === 0
-        ? true
-        : supportedPanelModes.includes(requestedPanelMode);
-      const effectivePanelMode = panelModeSupported
-        ? requestedPanelMode
-        : supportedPanelModes[0];
-      const panelState = getPanelCapabilities(effectivePanelMode);
+      const activeFlowId = normalizeFlowId(options?.activeFlowId ?? state?.activeFlowId, defaultFlowId);
+      const flowCapabilities = getFlowCapabilities(activeFlowId);
       const runtimeLocks = {
         autoRunLocked: Boolean(options?.autoRunLocked ?? state?.autoRunLocked),
         contributionMode: false,
@@ -243,259 +82,75 @@
         plusModeEnabled: true,
         settingsMenuLocked: Boolean(options?.settingsMenuLocked ?? state?.settingsMenuLocked),
       };
-      const effectiveSignupMethods = [];
-      if (flowState.supportsEmailSignup !== false) {
-        effectiveSignupMethods.push(SIGNUP_METHOD_EMAIL);
-      }
-      const canSelectPhoneSignup = false;
-      if (canSelectPhoneSignup) {
-        effectiveSignupMethods.push(SIGNUP_METHOD_PHONE);
-      }
-      if (!effectiveSignupMethods.length) {
-        effectiveSignupMethods.push(SIGNUP_METHOD_EMAIL);
-      }
-      const requestedSignupMethod = normalizeSignupMethod(
-        options?.signupMethod ?? state?.signupMethod
-      );
-      const effectiveSignupMethod = effectiveSignupMethods.includes(SIGNUP_METHOD_EMAIL)
-        ? SIGNUP_METHOD_EMAIL
-        : effectiveSignupMethods[0];
-      const requestedPlusAccountAccessStrategy = normalizePlusAccountAccessStrategyForPanel(
-        options?.plusAccountAccessStrategy ?? state?.plusAccountAccessStrategy,
-        effectivePanelMode
-      );
-      const panelPlusAccountAccessStrategies = (Array.isArray(panelState.supportedPlusAccountAccessStrategies)
-        && panelState.supportedPlusAccountAccessStrategies.length > 0
-        ? panelState.supportedPlusAccountAccessStrategies
-        : [PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH])
-        .map(normalizePlusAccountAccessStrategy)
-        .filter((strategy, index, strategies) => strategy && strategies.indexOf(strategy) === index);
-      const availablePlusAccountAccessStrategies = activeFlowId === 'openai'
-        && Boolean(flowState.supportsPlusMode)
-        && Boolean(runtimeLocks.plusModeEnabled)
-        && effectiveSignupMethod === SIGNUP_METHOD_EMAIL
-        ? panelPlusAccountAccessStrategies
-        : [PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH];
-      const effectivePlusAccountAccessStrategy = availablePlusAccountAccessStrategies.includes(requestedPlusAccountAccessStrategy)
-        ? requestedPlusAccountAccessStrategy
-        : PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH;
-      const canEditPlusAccountAccessStrategy = activeFlowId === 'openai'
-        && Boolean(flowState.supportsPlusMode)
-        && Boolean(runtimeLocks.plusModeEnabled)
-        && effectiveSignupMethod === SIGNUP_METHOD_EMAIL
-        && availablePlusAccountAccessStrategies.length > 1;
 
       return {
         activeFlowId,
-        canShowContributionMode: Boolean(flowState.supportsContributionMode),
-        canShowLuckmail: Boolean(flowState.supportsLuckmail),
-        canShowPhoneSettings: Boolean(flowState.supportsPhoneVerificationSettings),
-        canShowPlusSettings: Boolean(flowState.supportsPlusMode),
-        canSwitchFlow: Boolean(flowState.canSwitchFlow),
-        canEditPlusAccountAccessStrategy,
-        canUsePhoneSignup: canSelectPhoneSignup,
-        canUseSelectedPanelMode: panelModeSupported,
-        effectivePlusAccountAccessStrategy,
-        effectivePanelMode,
-        effectiveSignupMethod,
-        effectiveSignupMethods,
-        flowCapabilities: flowState,
-        panelCapabilities: panelState,
-        panelMode: effectivePanelMode,
-        requestedPanelMode,
-        requestedPlusAccountAccessStrategy,
-        requestedSignupMethod,
+        canShowContributionMode: false,
+        canShowLuckmail: false,
+        canShowPhoneSettings: false,
+        canShowPlusSettings: true,
+        canSwitchFlow: false,
+        canEditPlusAccountAccessStrategy: false,
+        canUsePhoneSignup: false,
+        canUseSelectedPanelMode: true,
+        effectivePlusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
+        effectivePanelMode: DEFAULT_PANEL_MODE,
+        effectiveSignupMethod: SIGNUP_METHOD_EMAIL,
+        effectiveSignupMethods: [SIGNUP_METHOD_EMAIL],
+        flowCapabilities,
+        panelCapabilities: getPanelCapabilities(DEFAULT_PANEL_MODE),
+        panelMode: DEFAULT_PANEL_MODE,
+        requestedPanelMode: DEFAULT_PANEL_MODE,
+        requestedPlusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
+        requestedSignupMethod: SIGNUP_METHOD_EMAIL,
         runtimeLocks,
-        shouldWarnCpaPhoneSignup: effectiveSignupMethod === SIGNUP_METHOD_PHONE
-          && Boolean(panelState.requiresPhoneSignupWarning),
+        shouldWarnCpaPhoneSignup: false,
         stepDefinitionOptions: {
           activeFlowId,
-          panelMode: effectivePanelMode,
-          plusAccountAccessStrategy: effectivePlusAccountAccessStrategy,
-          plusModeEnabled: runtimeLocks.plusModeEnabled,
-          signupMethod: effectiveSignupMethod,
+          panelMode: DEFAULT_PANEL_MODE,
+          plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
+          plusModeEnabled: true,
+          signupMethod: SIGNUP_METHOD_EMAIL,
         },
-        availablePlusAccountAccessStrategies,
-        supportedPanelModes,
-      };
-    }
-
-    function buildPhoneSignupValidationError(capabilityState = {}) {
-      const flowState = capabilityState.flowCapabilities || {};
-      const panelState = capabilityState.panelCapabilities || {};
-      const runtimeLocks = capabilityState.runtimeLocks || {};
-
-      if (!flowState.supportsPhoneSignup) {
-        return {
-          code: 'phone_signup_flow_unsupported',
-          message: '当前 flow 不支持手机号注册。',
-        };
-      }
-      if (!panelState.supportsPhoneSignup) {
-        return {
-          code: 'phone_signup_panel_unsupported',
-          message: `当前面板模式 ${getPanelModeLabel(capabilityState.requestedPanelMode)} 不支持手机号注册。`,
-        };
-      }
-      if (!runtimeLocks.phoneVerificationEnabled) {
-        return {
-          code: 'phone_signup_phone_verification_disabled',
-          message: '请先开启接码功能后再使用手机号注册。',
-        };
-      }
-      if (runtimeLocks.plusModeEnabled) {
-        return {
-          code: 'phone_signup_plus_mode_locked',
-          message: 'Plus 模式开启时不能使用手机号注册。',
-        };
-      }
-      if (runtimeLocks.contributionMode) {
-        return {
-          code: 'phone_signup_contribution_mode_locked',
-          message: '贡献模式开启时不能使用手机号注册。',
-        };
-      }
-      return {
-        code: 'phone_signup_unavailable',
-        message: '当前设置暂不支持手机号注册。',
+        availablePlusAccountAccessStrategies: [PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH],
+        supportedPanelModes: [DEFAULT_PANEL_MODE],
       };
     }
 
     function validateAutoRunStart(options = {}) {
-      const state = options?.state || {};
-      const capabilityState = resolveSidepanelCapabilities(options);
-      const errors = [];
-
-      if (
-        Array.isArray(capabilityState.supportedPanelModes)
-        && capabilityState.supportedPanelModes.length > 0
-        && capabilityState.canUseSelectedPanelMode === false
-      ) {
-        errors.push({
-          code: 'panel_mode_unsupported',
-          message: `当前 flow 不支持 ${getPanelModeLabel(capabilityState.requestedPanelMode)} 面板模式。`,
-        });
-      }
-
-      if (Boolean(state?.plusModeEnabled) && !capabilityState.flowCapabilities?.supportsPlusMode) {
-        errors.push({
-          code: 'plus_mode_unsupported',
-          message: '当前 flow 不支持 Plus 模式。',
-        });
-      }
-
-      if (Boolean(state?.contributionMode) && !capabilityState.flowCapabilities?.supportsContributionMode) {
-        errors.push({
-          code: 'contribution_mode_unsupported',
-          message: '当前 flow 不支持贡献模式。',
-        });
-      }
-
       return {
-        ok: errors.length === 0,
-        errors,
-        capabilityState,
+        ok: true,
+        errors: [],
+        capabilityState: resolveSidepanelCapabilities(options),
       };
     }
 
     function validateModeSwitch(options = {}) {
-      const state = options?.state || {};
-      const changedKeys = normalizeChangedKeys(
-        options?.changedKeys !== undefined
-          ? options.changedKeys
-          : Object.keys(state || {})
-      );
-      const changedKeySet = new Set(changedKeys);
-      const capabilityState = resolveSidepanelCapabilities(options);
-      const errors = [];
-      const normalizedUpdates = {};
-      const flowState = capabilityState.flowCapabilities || {};
-      const requestedPhoneSignup = capabilityState.requestedSignupMethod === SIGNUP_METHOD_PHONE;
-      const shouldReconcileSignupMethod = MODE_SWITCH_RELEVANT_KEYS.some((key) => changedKeySet.has(key));
-
-      if (
-        changedKeySet.has('panelMode')
-        && Array.isArray(capabilityState.supportedPanelModes)
-        && capabilityState.supportedPanelModes.length > 0
-        && capabilityState.canUseSelectedPanelMode === false
-      ) {
-        normalizedUpdates.panelMode = capabilityState.effectivePanelMode;
-        errors.push({
-          code: 'panel_mode_unsupported',
-          message: `当前 flow 不支持 ${getPanelModeLabel(capabilityState.requestedPanelMode)} 面板模式。`,
-        });
-      }
-
-      if (changedKeySet.has('plusModeEnabled') && state?.plusModeEnabled !== true) {
-        normalizedUpdates.plusModeEnabled = true;
-      }
-
-      if (changedKeySet.has('contributionMode') && Boolean(state?.contributionMode) && !flowState.supportsContributionMode) {
-        normalizedUpdates.contributionMode = false;
-        errors.push({
-          code: 'contribution_mode_unsupported',
-          message: '当前 flow 不支持贡献模式。',
-        });
-      }
-
-      if (
-        changedKeySet.has('phoneVerificationEnabled')
-        && Boolean(state?.phoneVerificationEnabled)
-      ) {
-        normalizedUpdates.phoneVerificationEnabled = false;
-        if (!flowState.supportsPhoneVerificationSettings) {
-          errors.push({
-            code: 'phone_verification_unsupported',
-            message: '已有账户 Plus 流程不支持接码配置。',
-          });
-        }
-      }
-
-      if (
-        shouldReconcileSignupMethod
-        && requestedPhoneSignup
-        && capabilityState.effectiveSignupMethod !== SIGNUP_METHOD_PHONE
-      ) {
-        normalizedUpdates.signupMethod = capabilityState.effectiveSignupMethod;
-        errors.push(buildPhoneSignupValidationError(capabilityState));
-      }
-
-      if (
-        changedKeySet.has('plusAccountAccessStrategy')
-        && capabilityState.requestedPlusAccountAccessStrategy !== capabilityState.effectivePlusAccountAccessStrategy
-      ) {
-        normalizedUpdates.plusAccountAccessStrategy = capabilityState.effectivePlusAccountAccessStrategy;
-      }
-
       return {
-        ok: errors.length === 0,
-        changedKeys,
-        capabilityState,
-        errors,
-        normalizedUpdates,
+        ok: true,
+        changedKeys: Array.isArray(options?.changedKeys) ? [...options.changedKeys] : [],
+        capabilityState: resolveSidepanelCapabilities(options),
+        errors: [],
+        normalizedUpdates: {
+          plusModeEnabled: true,
+          signupMethod: SIGNUP_METHOD_EMAIL,
+          plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
+          panelMode: DEFAULT_PANEL_MODE,
+          phoneVerificationEnabled: false,
+          contributionMode: false,
+        },
       };
     }
 
-    function canUsePhoneSignup(state = {}) {
-      return resolveSidepanelCapabilities({ state }).canUsePhoneSignup;
-    }
-
-    function resolveSignupMethod(state = {}, signupMethod = undefined) {
-      return resolveSidepanelCapabilities({
-        signupMethod,
-        state,
-      }).effectiveSignupMethod;
-    }
-
     return {
-      canUsePhoneSignup,
+      canUsePhoneSignup: () => false,
       getFlowCapabilities,
       getPanelCapabilities,
       normalizeFlowId,
       normalizePanelMode,
       normalizeSignupMethod,
       resolveSidepanelCapabilities,
-      resolveSignupMethod,
+      resolveSignupMethod: () => SIGNUP_METHOD_EMAIL,
       validateAutoRunStart,
       validateModeSwitch,
     };
@@ -510,10 +165,7 @@
     FLOW_CAPABILITIES,
     PANEL_CAPABILITIES,
     PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
-    PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION,
-    PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
     SIGNUP_METHOD_EMAIL,
-    SIGNUP_METHOD_PHONE,
     normalizeFlowId,
     normalizePanelMode,
     normalizePlusAccountAccessStrategy,
