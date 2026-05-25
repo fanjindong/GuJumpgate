@@ -118,6 +118,28 @@ for (const requiredPayloadNeedle of [
   );
 }
 
+assertIncludes(
+  html,
+  'value="5" min="0" max="60" step="1"',
+  '侧栏验证码弹窗延迟输入框默认值应为 5 秒。'
+);
+assertIncludes(
+  html,
+  '检测到验证码弹窗后，先等待多少秒再开始获取验证码；默认 5 秒',
+  '侧栏验证码弹窗延迟说明应标明默认 5 秒。'
+);
+assertIncludes(
+  collectSettingsPayloadSource,
+  'hostedCheckoutVerificationPopupDelaySeconds: normalizePositiveInteger(elements.inputHostedCheckoutVerificationPopupDelaySeconds?.value, 5, { min: 0, max: 60 })',
+  '侧栏保存验证码弹窗延迟时应使用 5 秒作为兜底默认值。'
+);
+const applySettingsStateSource = extractFunctionSource(js, 'applySettingsState');
+assertIncludes(
+  applySettingsStateSource,
+  'elements.inputHostedCheckoutVerificationPopupDelaySeconds.value = String(normalizePositiveInteger(state.hostedCheckoutVerificationPopupDelaySeconds, 5, { min: 0, max: 60 }))',
+  '侧栏回填验证码弹窗延迟时应使用 5 秒作为兜底默认值。'
+);
+
 for (const removedPayloadNeedle of [
   'inputVpsUrl',
   'inputSub2ApiUrl',

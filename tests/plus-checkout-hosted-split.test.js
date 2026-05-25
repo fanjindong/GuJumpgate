@@ -214,8 +214,20 @@ function assertBackgroundWiring() {
   );
 }
 
+function assertHostedVerificationPopupDelayDefault() {
+  assert.ok(
+    executorSource.includes('const HOSTED_CHECKOUT_VERIFICATION_POPUP_DELAY_DEFAULT_SECONDS = 5;'),
+    'Hosted Checkout 验证码弹窗等待默认值应为 5 秒。'
+  );
+  assert.ok(
+    /hostedCheckoutVerificationPopupDelaySeconds:\s*5/.test(backgroundSource),
+    '后台持久化设置中的验证码弹窗等待默认值应为 5 秒。'
+  );
+}
+
 async function runTests() {
   assertBackgroundWiring();
+  assertHostedVerificationPopupDelayDefault();
   await runHostedSubmitMissingTabTest();
   await runHostedSubmitCompletesAfterPayPalTransitionTest();
   await runHostedPayPalMissingTabTest();

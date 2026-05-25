@@ -478,7 +478,7 @@
         ? Boolean(elements.inputPlusCheckoutCloudConversionEnabled.checked)
         : true,
       hostedCheckoutVerificationUrl: normalizeUrl(elements.inputHostedCheckoutVerificationUrl?.value),
-      hostedCheckoutVerificationPopupDelaySeconds: normalizePositiveInteger(elements.inputHostedCheckoutVerificationPopupDelaySeconds?.value, 20, { min: 0, max: 60 }),
+      hostedCheckoutVerificationPopupDelaySeconds: normalizePositiveInteger(elements.inputHostedCheckoutVerificationPopupDelaySeconds?.value, 5, { min: 0, max: 60 }),
       hostedCheckoutPhoneNumber: String(elements.inputHostedCheckoutPhone?.value || '').trim(),
       hostedCheckoutSmsPoolText: String(elements.inputHostedCheckoutSmsPool?.value || '').trim(),
       gopayCountryCode: normalizeCountryCode(elements.selectGoPayCountryCode?.value),
@@ -526,7 +526,7 @@
       elements.inputHostedCheckoutVerificationUrl.value = String(state.hostedCheckoutVerificationUrl || '');
     }
     if (elements.inputHostedCheckoutVerificationPopupDelaySeconds) {
-      elements.inputHostedCheckoutVerificationPopupDelaySeconds.value = String(normalizePositiveInteger(state.hostedCheckoutVerificationPopupDelaySeconds, 20, { min: 0, max: 60 }));
+      elements.inputHostedCheckoutVerificationPopupDelaySeconds.value = String(normalizePositiveInteger(state.hostedCheckoutVerificationPopupDelaySeconds, 5, { min: 0, max: 60 }));
     }
     if (elements.inputHostedCheckoutPhone) {
       elements.inputHostedCheckoutPhone.value = String(state.hostedCheckoutPhoneNumber || '');

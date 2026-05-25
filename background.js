@@ -791,7 +791,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   plusCheckoutCloudConversionApiUrl: BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_URL,
   plusCheckoutCloudConversionApiKey: BUILTIN_PLUS_CHECKOUT_CLOUD_CONVERSION_API_KEY,
   plusCheckoutConversionProxyUrl: '',
-  hostedCheckoutVerificationPopupDelaySeconds: 20,
+  hostedCheckoutVerificationPopupDelaySeconds: 5,
   hostedCheckoutVerificationUrl: '',
   hostedCheckoutPhoneNumber: '',
   hostedCheckoutSmsPoolText: '',
