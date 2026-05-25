@@ -12,9 +12,7 @@ GuJumpgate 是我在 fork 开源项目后继续二次开发的 Chrome 扩展。�
 
 ## 项目演示
 
-> 点击播放视频
-
-[播放项目演示](./demo.mp4)
+https://github.com/user-attachments/assets/6be0eb02-aa2c-4d1d-8367-3248053835a2
 
 ## 适用场景
 

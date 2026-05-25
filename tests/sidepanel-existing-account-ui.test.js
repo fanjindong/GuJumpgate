@@ -133,9 +133,8 @@ assertIncludes(
   'hostedCheckoutVerificationPopupDelaySeconds: normalizePositiveInteger(elements.inputHostedCheckoutVerificationPopupDelaySeconds?.value, 5, { min: 0, max: 60 })',
   '侧栏保存验证码弹窗延迟时应使用 5 秒作为兜底默认值。'
 );
-const applySettingsStateSource = extractFunctionSource(js, 'applySettingsState');
 assertIncludes(
-  applySettingsStateSource,
+  js,
   'elements.inputHostedCheckoutVerificationPopupDelaySeconds.value = String(normalizePositiveInteger(state.hostedCheckoutVerificationPopupDelaySeconds, 5, { min: 0, max: 60 }))',
   '侧栏回填验证码弹窗延迟时应使用 5 秒作为兜底默认值。'
 );

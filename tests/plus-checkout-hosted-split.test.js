@@ -223,6 +223,14 @@ function assertHostedVerificationPopupDelayDefault() {
     /hostedCheckoutVerificationPopupDelaySeconds:\s*5/.test(backgroundSource),
     '后台持久化设置中的验证码弹窗等待默认值应为 5 秒。'
   );
+  assert.ok(
+    backgroundSource.includes('function normalizeHostedCheckoutVerificationPopupDelaySeconds(value, fallback = 5)'),
+    '后台归一化验证码弹窗等待秒数时应使用 5 秒作为函数默认兜底值。'
+  );
+  assert.ok(
+    backgroundSource.includes('Math.floor(Number(fallback) || 5)'),
+    '后台归一化验证码弹窗等待秒数时，非法兜底值应回退到 5 秒。'
+  );
 }
 
 async function runTests() {
