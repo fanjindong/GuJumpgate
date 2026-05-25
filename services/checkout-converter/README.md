@@ -12,8 +12,7 @@
 
 当前实现与项目内 [content/plus-checkout.js](../../content/plus-checkout.js) 的 Checkout 创建规则保持一致：
 
-- `paypal` 默认使用 `US / USD`。
-- `gopay` 默认使用 `ID / IDR`。
+- 当前只支持 `paypal`，默认使用 `US / USD`。
 - 默认转换后的 `processorEntity` 为 `openai_llc`。
 - `paypal` 优先返回 `pay.openai.com` 的 Hosted Checkout 长链。
 

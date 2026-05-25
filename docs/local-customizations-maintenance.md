@@ -9,11 +9,10 @@
 1. 已有账户 JSON 登录。
 2. PayPal Hosted Checkout 分段流程。
 3. 云端支付转换服务接入。
-4. GoPay 订阅确认。
-5. GPC 自动/手动任务模式。
-6. 账号运行记录和本地 helper 快照同步。
-7. IP 代理配置和出口检测。
-8. 操作间延迟、步间延迟和自动运行停止保护。
+4. 全局美国节点作为运行前置条件。
+5. 账号运行记录和本地 helper 快照同步。
+6. IP 代理配置和出口检测。
+7. 操作间延迟、步间延迟和自动运行停止保护。
 
 推荐每次同步后执行：
 
@@ -76,6 +75,8 @@ PayPal 默认使用 Hosted Checkout 分段节点：
 
 云端支付转换开启时，本地支付转换代理不应生效。关闭云端转换后，才允许走本地创建 Checkout 路径。
 
+PayPal Hosted 当前只支持全局美国节点环境。维护文档、教程和错误提示都应把美国出口作为前置条件，而不是可选优化项。
+
 ## 3. 云端支付转换服务
 
 ### 目标
@@ -95,26 +96,9 @@ PayPal 默认使用 Hosted Checkout 分段节点：
 
 不要把真实 `accessToken` 写入日志。生产环境必须配置 `CHECKOUT_CONVERTER_API_KEY`。
 
-## 4. GoPay 与 GPC
+## 4. 历史支付链路边界
 
-### 目标
-
-GoPay 和 GPC 都复用已有账户登录与 Checkout 创建前置步骤，只替换支付中段。
-
-### 关键文件
-
-| 文件 | 作用 |
-| --- | --- |
-| `gopay-utils.js` | GoPay / GPC 字段和接口归一化。 |
-| `background/steps/gopay-manual-confirm.js` | GoPay / GPC 手动确认状态处理。 |
-| `background/steps/gopay-approve.js` | GoPay 授权页兼容执行器。 |
-| `content/gopay-flow.js` | GoPay 页面操作。 |
-| `sidepanel/sidepanel.html` | GoPay / GPC 配置行。 |
-| `sidepanel/sidepanel.js` | GoPay / GPC 配置收集、回显和显隐。 |
-
-### 维护注意
-
-GoPay OTP、GPC API Key、PIN 只能通过侧边栏或运行时输入提供，不要写入代码、测试或文档示例的真实值。
+当前只支持 PayPal Hosted。GoPay 与 GPC 相关文件如果仍存在，只能作为历史兼容或后续清理对象，不应重新写入 README、使用教程或公告中的当前能力列表。
 
 ## 5. 自动运行与停止保护
 
@@ -181,7 +165,8 @@ helper 不可用时应静默跳过快照同步，不能阻塞主流程。
 
 - 当前步骤定义变化。
 - 账户 JSON 字段变化。
-- PayPal Hosted、GoPay、GPC 配置变化。
+- PayPal Hosted 配置变化。
+- 全局美国节点前置条件变化。
 - 云端支付转换接口变化。
 - 自动运行停止、重试、恢复语义变化。
 - 文件新增、删除、重命名。

@@ -3,24 +3,23 @@
 ## 部分信息
 
 - `section_slug`: `existing-account-chatgpt-plus`
-- `适用主题`: `已有账户`、`ChatGPT Plus`、`PayPal Hosted`、`GoPay`、`GPC`
+- `适用主题`: `已有账户`、`ChatGPT Plus`、`PayPal Hosted`
 - `维护方式`: `直接更新本文件`
 
 ## 适用场景
 
 - 已经有一个可登录的 ChatGPT 账号。
 - 想通过 GuJumpgate 自动完成 Plus 订阅链路。
-- 需要了解侧边栏中 PayPal Hosted、GoPay、GPC 三种支付方式怎么配置。
+- 需要了解侧边栏中 PayPal Hosted 支付方式怎么配置。
+- 已准备全局美国节点，并确认浏览器相关流量都走美国出口。
 
 ## 准备内容
 
 1. 一个已有 ChatGPT 账号。
 2. 账号邮箱、密码和验证码接口。
-3. 可用的支付方式：
-   - PayPal Hosted
-   - GoPay
-   - GPC
-4. 已安装并启用无痕权限的 GuJumpgate 扩展。
+3. 可用的支付方式：PayPal Hosted。
+4. 全局美国节点。运行前必须确认 ChatGPT、OpenAI 认证页、PayPal 和支付转换链路都走美国出口。
+5. 已安装并启用无痕权限的 GuJumpgate 扩展。
 
 ## 账户 JSON
 
@@ -56,7 +55,7 @@
 
 ## PayPal Hosted 配置
 
-PayPal Hosted 是当前默认推荐链路。
+PayPal Hosted 是当前唯一支持的 Plus 支付链路。
 
 需要关注的配置：
 
@@ -77,39 +76,15 @@ PayPal Hosted 是当前默认推荐链路。
 6. 处理 PayPal Hosted 支付。
 7. Plus 开通成功。
 
-## GoPay 配置
-
-选择 `GoPay` 后，需要填写：
-
-- `GoPay 区号`
-- `GoPay 手机`
-- `GoPay 验证码`
-- `GoPay PIN`
-
-如果运行时需要手动确认，侧边栏会弹出确认入口。真实 OTP 和 PIN 只应通过侧边栏输入，不要写入文档或代码。
-
-## GPC 配置
-
-选择 `GPC` 后，需要填写：
-
-- `GPC API`
-- `GPC API Key`
-- `GPC 模式`
-- `GPC 手机`
-- `GPC OTP`
-- `本地短信 helper`
-- `GPC PIN`
-
-自动模式由远端任务处理手机号和验证码；手动模式需要你按侧边栏提示补充 OTP 或 PIN。
-
 ## 开始运行
 
 1. 填写账户 JSON。
-2. 选择 Plus 支付方式。
-3. 补齐对应支付方式的配置。
-4. 点击保存。
-5. 设置运行次数。
-6. 点击 `自动`。
+2. 确认 Plus 支付方式为 PayPal。
+3. 补齐 PayPal Hosted 配置。
+4. 确认当前浏览器处于全局美国节点环境，不要使用规则分流或非美国出口。
+5. 点击保存。
+6. 设置运行次数。
+7. 点击 `自动`。
 
 运行中可通过日志区查看当前节点、错误原因和是否进入重试。
 
