@@ -9,6 +9,13 @@ GuJumpgate 是我在 fork 开源项目后继续二次开发的 Chrome 扩展。�
 >
 > 必须在全局美国节点前提下使用。运行前请确认浏览器访问 ChatGPT、OpenAI 认证页、PayPal 和支付转换链路时都走美国出口；不要使用规则分流、局部代理或非美国节点，避免登录、Checkout 和支付页面因出口地区不一致而失败。
 
+
+## 项目演示
+
+> 点击播放视频
+
+<video src="./demo.mp4" controls width="100%"></video>
+
 ## 适用场景
 
 - 已经有可登录的 ChatGPT 账号。
