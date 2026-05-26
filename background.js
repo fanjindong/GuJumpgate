@@ -18,6 +18,7 @@ importScripts(
   'background/cpa-api.js',
   'background/panel-bridge.js',
   'background/workflow-engine.js',
+  'background/page-recovery.js',
   'background/runtime-state.js',
   'background/mail-rule-registry.js',
   'flows/openai/mail-rules.js',
@@ -12043,6 +12044,17 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   chrome,
 });
 
+const pageRecoveryManager = self.MultiPageBackgroundPageRecovery?.createPageRecoveryManager({
+  addLog,
+  chrome,
+  getNodeDefinitionsForState,
+  getState,
+  registerTab,
+  setNodeStatus,
+  setState,
+  startAutoRunLoop,
+});
+
 async function resumeAutoRunIfWaitingForEmail(options = {}) {
   const { silent = false } = options;
   const state = await getState();
@@ -13039,6 +13051,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   flushCommand,
   getCurrentLuckmailPurchase,
   getPendingAutoRunTimerPlan,
+  getPageRecoveryState: (...args) => pageRecoveryManager.getPageRecoveryState(...args),
   getSourceLabel,
   getState,
   getNodeDefinitionForState,
@@ -13086,6 +13099,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   requestStop,
   probeIpProxyExit: null,
   resetState,
+  resumeFromPage: (...args) => pageRecoveryManager.resumeFromPage(...args),
   resumeAutoRun,
   scheduleAutoRun,
   selectLuckmailPurchase,

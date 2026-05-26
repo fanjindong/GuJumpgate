@@ -2547,6 +2547,142 @@ header {
   gap: 5px;
 }
 
+.page-recovery-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid var(--orange);
+  border-radius: var(--radius-md);
+  background: var(--orange-soft);
+}
+
+.page-recovery-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.page-recovery-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.page-recovery-message {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.page-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.step-page {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.step-page-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.step-page-summary::-webkit-details-marker {
+  display: none;
+}
+
+.step-page-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.step-page-status {
+  width: 20px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.step-page.running {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange-soft) 45%, var(--bg-surface));
+}
+
+.step-page.completed {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+
+.step-page.needs_action {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red-soft) 42%, var(--bg-surface));
+}
+
+.step-page.partial {
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber-soft) 40%, var(--bg-surface));
+}
+
+.step-page-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.page-node-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.page-node-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.page-node-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.page-node-id {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-node-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .step-row {
   display: flex;
   align-items: center;

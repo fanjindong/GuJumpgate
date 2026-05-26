@@ -7,26 +7,45 @@
   const PLUS_PAYMENT_METHOD_GPC_HELPER = 'gpc-helper';
   const PLUS_PAYMENT_STEP_KEY = 'paypal-approve';
   const PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH = 'oauth';
+  const OPENAI_PAGE_GROUPS = Object.freeze({
+    chatgpt: Object.freeze({ pageId: 'chatgpt', pageTitle: 'ChatGPT 页面' }),
+    auth: Object.freeze({ pageId: 'auth', pageTitle: '认证页' }),
+    checkout: Object.freeze({ pageId: 'checkout', pageTitle: 'Checkout 页面' }),
+    paypal: Object.freeze({ pageId: 'paypal', pageTitle: 'PayPal 页面' }),
+    success: Object.freeze({ pageId: 'success', pageTitle: '开通结果' }),
+  });
+
+  function withPage(step, pageId) {
+    const page = OPENAI_PAGE_GROUPS[pageId] || null;
+    return {
+      ...step,
+      // 页面分组只服务于侧栏展示与恢复判断，不改变 workflow 的真实执行顺序。
+      ui: {
+        ...(step.ui && typeof step.ui === 'object' ? step.ui : {}),
+        ...(page || {}),
+      },
+    };
+  }
 
   const EXISTING_ACCOUNT_COMMON_PREFIX_STEP_DEFINITIONS = [
-    { id: 1, order: 10, key: 'open-chatgpt', title: '打开 ChatGPT 官网', sourceId: 'chatgpt', driverId: null, command: 'open-chatgpt' },
-    { id: 2, order: 20, key: 'existing-account-login', title: '登录已有账户', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'existing-account-login' },
-    { id: 3, order: 30, key: 'fetch-existing-login-code', title: '获取登录验证码', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'fetch-existing-login-code', mailRuleId: 'openai-login-code' },
-    { id: 4, order: 40, key: 'plus-checkout-create', title: '创建 Plus Checkout', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-create' },
+    withPage({ id: 1, order: 10, key: 'open-chatgpt', title: '打开 ChatGPT 官网', sourceId: 'chatgpt', driverId: null, command: 'open-chatgpt' }, 'chatgpt'),
+    withPage({ id: 2, order: 20, key: 'existing-account-login', title: '登录已有账户', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'existing-account-login' }, 'auth'),
+    withPage({ id: 3, order: 30, key: 'fetch-existing-login-code', title: '获取登录验证码', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'fetch-existing-login-code', mailRuleId: 'openai-login-code' }, 'auth'),
+    withPage({ id: 4, order: 40, key: 'plus-checkout-create', title: '创建 Plus Checkout', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-create' }, 'checkout'),
   ];
 
   const EXISTING_ACCOUNT_PAYPAL_STEP_DEFINITIONS = [
     ...EXISTING_ACCOUNT_COMMON_PREFIX_STEP_DEFINITIONS,
-    { id: 5, order: 50, key: 'plus-checkout-billing', title: '填写账单并提交订单', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-billing' },
-    { id: 6, order: 60, key: 'paypal-approve', title: 'PayPal 登录与授权', sourceId: 'paypal-flow', driverId: 'content/paypal-flow', command: 'paypal-approve' },
-    { id: 7, order: 70, key: 'plus-activation-success', title: 'Plus 开通成功', sourceId: 'chatgpt', driverId: null, command: 'plus-activation-success' },
+    withPage({ id: 5, order: 50, key: 'plus-checkout-billing', title: '填写账单并提交订单', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-billing' }, 'checkout'),
+    withPage({ id: 6, order: 60, key: 'paypal-approve', title: 'PayPal 登录与授权', sourceId: 'paypal-flow', driverId: 'content/paypal-flow', command: 'paypal-approve' }, 'paypal'),
+    withPage({ id: 7, order: 70, key: 'plus-activation-success', title: 'Plus 开通成功', sourceId: 'chatgpt', driverId: null, command: 'plus-activation-success' }, 'success'),
   ];
 
   const EXISTING_ACCOUNT_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS = [
     ...EXISTING_ACCOUNT_COMMON_PREFIX_STEP_DEFINITIONS,
-    { id: 5, order: 50, key: 'hosted-checkout-submit', title: '填写 Hosted Checkout', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'hosted-checkout-submit' },
-    { id: 6, order: 60, key: 'hosted-paypal-payment', title: '处理 PayPal Hosted 支付', sourceId: 'paypal-flow', driverId: 'content/paypal-flow', command: 'hosted-paypal-payment' },
-    {
+    withPage({ id: 5, order: 50, key: 'hosted-checkout-submit', title: '填写 Hosted Checkout', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'hosted-checkout-submit' }, 'checkout'),
+    withPage({ id: 6, order: 60, key: 'hosted-paypal-payment', title: '处理 PayPal Hosted 支付', sourceId: 'paypal-flow', driverId: 'content/paypal-flow', command: 'hosted-paypal-payment' }, 'paypal'),
+    withPage({
       id: 7,
       order: 70,
       key: 'plus-activation-success',
@@ -34,19 +53,19 @@
       sourceId: 'chatgpt',
       driverId: null,
       command: 'plus-activation-success',
-    },
+    }, 'success'),
   ];
 
   const EXISTING_ACCOUNT_GOPAY_STEP_DEFINITIONS = [
     ...EXISTING_ACCOUNT_COMMON_PREFIX_STEP_DEFINITIONS,
-    { id: 5, order: 50, key: 'gopay-subscription-confirm', title: '等待 GoPay 订阅确认', sourceId: 'gopay-flow', driverId: 'content/gopay-flow', command: 'gopay-subscription-confirm' },
-    { id: 6, order: 60, key: 'plus-activation-success', title: 'Plus 开通成功', sourceId: 'chatgpt', driverId: null, command: 'plus-activation-success' },
+    withPage({ id: 5, order: 50, key: 'gopay-subscription-confirm', title: '等待 GoPay 订阅确认', sourceId: 'gopay-flow', driverId: 'content/gopay-flow', command: 'gopay-subscription-confirm' }, 'paypal'),
+    withPage({ id: 6, order: 60, key: 'plus-activation-success', title: 'Plus 开通成功', sourceId: 'chatgpt', driverId: null, command: 'plus-activation-success' }, 'success'),
   ];
 
   const EXISTING_ACCOUNT_GPC_STEP_DEFINITIONS = [
     ...EXISTING_ACCOUNT_COMMON_PREFIX_STEP_DEFINITIONS,
-    { id: 5, order: 50, key: 'plus-checkout-billing', title: '等待 GPC 任务完成', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-billing' },
-    { id: 6, order: 60, key: 'plus-activation-success', title: 'Plus 开通成功', sourceId: 'chatgpt', driverId: null, command: 'plus-activation-success' },
+    withPage({ id: 5, order: 50, key: 'plus-checkout-billing', title: '等待 GPC 任务完成', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-billing' }, 'checkout'),
+    withPage({ id: 6, order: 60, key: 'plus-activation-success', title: 'Plus 开通成功', sourceId: 'chatgpt', driverId: null, command: 'plus-activation-success' }, 'success'),
   ];
 
   const PLUS_PAYPAL_STEP_DEFINITIONS = EXISTING_ACCOUNT_PAYPAL_STEP_DEFINITIONS;

@@ -46,6 +46,7 @@ const sidepanelElementIds = Array.from(new Set(
 assertIncludes(html, 'id="row-existing-account-json"', '侧栏应包含账户 JSON 行。');
 assertIncludes(html, 'id="input-existing-account-json"', '侧栏应包含账户 JSON 输入框。');
 assertIncludes(html, 'id="row-plus-checkout-cloud-conversion"', '侧栏应显示云端支付转换开关。');
+assertIncludes(html, 'id="page-recovery-card"', '侧栏应包含页面级恢复建议容器。');
 assertIncludes(html, 'id="row-step6-cookie-cleanup-settings"', '侧栏应保留清 Cookies 独立开关行。');
 assertIncludes(html, 'id="btn-save-settings"', '侧栏应保留保存按钮。');
 assert.ok(css.length > 0, '侧栏样式文件应存在内容。');
@@ -171,6 +172,12 @@ assertIncludes(
 const manualStepBlock = js.slice(js.indexOf("stepsList?.addEventListener('click'"));
 assertIncludes(manualStepBlock, "type: 'EXECUTE_NODE'", '手动执行节点应发送 EXECUTE_NODE 消息。');
 assertIncludes(manualStepBlock, 'existingAccountJson: getExistingAccountJsonInputValue()', '手动执行节点应携带账户 JSON。');
+assertIncludes(js, "type: 'GET_PAGE_RECOVERY_STATE'", '侧栏应读取页面级恢复状态。');
+assertIncludes(js, "type: 'RESUME_FROM_PAGE'", '侧栏应通过后台执行页面恢复动作。');
+assertIncludes(js, "button.dataset.recoveryAction === 'refresh'", '重新检测按钮只应刷新建议，不能隐式执行恢复。');
+assertIncludes(js, "data-recovery-action=\"${escapeHtml(suggestion.secondaryAction === 'refresh' ? 'refresh' : 'resume')}\"", '恢复建议次按钮应显式区分刷新和执行。');
+assertIncludes(js, 'renderNodeRowsForPage(page)', '侧栏主流程应渲染页面，并把节点放入展开区域。');
+assertIncludes(js, 'step-page', '侧栏主步骤应使用页面行样式。');
 
 for (const removedJsNeedle of [
   'updateMailProviderUI',

@@ -86,6 +86,21 @@ assert.strictEqual(allBillingNode?.title, '填写账单并提交订单');
 const paypalWorkflow = definitions.getWorkflow({ plusPaymentMethod: 'paypal', plusModeEnabled: true });
 assert.deepStrictEqual(Array.from(paypalWorkflow.nodeIds), hostedPaypalKeys);
 
+const hostedPaypalNodes = definitions.getNodes({ plusPaymentMethod: 'paypal', plusModeEnabled: true });
+const hostedPaypalPageIds = Object.fromEntries(hostedPaypalNodes.map((node) => [node.nodeId, node.ui?.pageId]));
+assert.deepStrictEqual(hostedPaypalPageIds, {
+  'open-chatgpt': 'chatgpt',
+  'existing-account-login': 'auth',
+  'fetch-existing-login-code': 'auth',
+  'plus-checkout-create': 'checkout',
+  'hosted-checkout-submit': 'checkout',
+  'hosted-paypal-payment': 'paypal',
+  'plus-activation-success': 'success',
+});
+for (const node of hostedPaypalNodes) {
+  assert.ok(node.ui?.pageTitle, `节点 ${node.nodeId} 应包含页面标题。`);
+}
+
 const successNode = definitions.getNodeById('plus-activation-success', {
   plusPaymentMethod: 'paypal',
   plusModeEnabled: true,

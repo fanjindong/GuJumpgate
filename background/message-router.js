@@ -48,6 +48,7 @@
       getCurrentLuckmailPurchase,
       getCurrentPayPalAccount,
       getCurrentMail2925Account,
+      getPageRecoveryState = null,
       getPendingAutoRunTimerPlan,
       getSourceLabel,
       getState,
@@ -151,6 +152,7 @@
       probeIpProxyExit,
       handleCloudflareSecurityBlocked,
       resetState,
+      resumeFromPage = null,
       resumeAutoRun,
       scheduleAutoRun,
       selectLuckmailPurchase,
@@ -1114,6 +1116,13 @@
           return await getState();
         }
 
+        case 'GET_PAGE_RECOVERY_STATE': {
+          if (typeof getPageRecoveryState !== 'function') {
+            throw new Error('页面恢复状态能力尚未接入。');
+          }
+          return await getPageRecoveryState(message.payload || {});
+        }
+
         case 'EXPORT_CURRENT_SESSION_JSON': {
           if (typeof exportCurrentSessionJson !== 'function') {
             throw new Error('当前 SESSION JSON 导出能力未接入。');
@@ -1295,6 +1304,18 @@
             handleAutoRunLoopUnhandledError(error).catch(() => {});
           });
           return { ok: true };
+        }
+
+        case 'RESUME_FROM_PAGE': {
+          clearStopRequest();
+          if (typeof resumeFromPage !== 'function') {
+            throw new Error('页面恢复能力尚未接入。');
+          }
+          if (message.source === 'sidepanel') {
+            await lockAutomationWindowFromMessage(message, sender);
+            await ensureManualInteractionAllowed('页面恢复');
+          }
+          return await resumeFromPage(message.payload || {});
         }
 
         case 'TAKEOVER_AUTO_RUN': {

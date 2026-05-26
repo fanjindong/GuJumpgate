@@ -9,6 +9,8 @@
     stopped: '\u25A0',
     manual_completed: '跳',
     skipped: '跳',
+    partial: '…',
+    needs_action: '!',
   };
   const DONE_STATUSES = new Set(['completed', 'manual_completed', 'skipped']);
   const AUTO_LOCKED_PHASES = new Set(['running', 'waiting_step', 'waiting_email', 'retrying', 'waiting_interval']);
@@ -45,6 +47,7 @@
     btnOpenRelease: byId('btn-open-release'),
     settingsCard: byId('settings-card'),
     stepsProgress: byId('steps-progress'),
+    pageRecoveryCard: byId('page-recovery-card'),
     btnAutoRun: byId('btn-auto-run'),
     btnAutoContinue: byId('btn-auto-continue'),
     autoContinueBar: byId('auto-continue-bar'),
@@ -167,6 +170,7 @@
   const autoHintText = document.querySelector('.auto-hint');
 
   let latestState = {};
+  let latestPageRecoveryState = { pages: [], recoverySuggestion: null };
   let settingsDirty = false;
   let settingsSaveInFlight = false;
   let settingsAutoSaveTimer = null;
@@ -342,26 +346,113 @@
     ]));
   }
 
-  function renderStepsList() {
-    if (!stepsList) {
-      return;
-    }
-    const nodes = getWorkflowNodes(latestState);
-    stepsList.innerHTML = nodes.map((node, index) => `
-      <div class="step-row pending" data-node-id="${escapeHtml(node.nodeId)}">
-        <div class="step-main">
-          <span class="step-index">${index + 1}</span>
-          <div class="step-copy">
-            <span class="step-title">${escapeHtml(node.title || node.nodeId)}</span>
-            <span class="step-subtitle mono">${escapeHtml(node.nodeId)}</span>
-          </div>
+  function getPageStatusLabel(status = '') {
+    const labels = {
+      pending: '未开始',
+      running: '执行中',
+      completed: '已完成',
+      needs_action: '需处理',
+      partial: '部分完成',
+      failed: '失败',
+      stopped: '已停止',
+    };
+    return labels[String(status || '').trim().toLowerCase()] || '未开始';
+  }
+
+  function renderNodeRowsForPage(page) {
+    const nodes = Array.isArray(page?.nodes) ? page.nodes : [];
+    return nodes.map((node) => `
+      <div class="page-node-row ${escapeHtml(node.status || 'pending')}" data-node-id="${escapeHtml(node.nodeId)}">
+        <div class="page-node-copy">
+          <span class="page-node-title">${escapeHtml(node.title || node.nodeId)}</span>
+          <span class="page-node-id mono">${escapeHtml(node.nodeId)}</span>
         </div>
-        <div class="step-actions">
-          <span class="step-status" data-node-id="${escapeHtml(node.nodeId)}"></span>
+        <div class="page-node-actions">
+          <span class="step-status" data-node-id="${escapeHtml(node.nodeId)}">${escapeHtml(STATUS_ICONS[node.status] || '')}</span>
           <button class="btn btn-outline btn-xs step-btn" type="button" data-node-id="${escapeHtml(node.nodeId)}">执行</button>
         </div>
       </div>
     `).join('');
+  }
+
+  function renderPageRecoveryCard() {
+    const suggestion = latestPageRecoveryState?.recoverySuggestion || null;
+    if (!elements.pageRecoveryCard) {
+      return;
+    }
+    if (!suggestion) {
+      elements.pageRecoveryCard.hidden = true;
+      elements.pageRecoveryCard.innerHTML = '';
+      return;
+    }
+    elements.pageRecoveryCard.hidden = false;
+    elements.pageRecoveryCard.innerHTML = `
+      <div class="page-recovery-copy">
+        <span class="page-recovery-title">${escapeHtml(suggestion.title || '可恢复当前流程')}</span>
+        <span class="page-recovery-message">${escapeHtml(suggestion.message || '')}</span>
+      </div>
+      <div class="page-recovery-actions">
+        <button class="btn btn-primary btn-sm page-recovery-btn" type="button"
+          data-recovery-action="resume"
+          data-recovery-kind="${escapeHtml(suggestion.kind || '')}"
+          data-page-id="${escapeHtml(suggestion.pageId || '')}">
+          ${escapeHtml(suggestion.primaryLabel || '继续')}
+        </button>
+        <button class="btn btn-outline btn-sm page-recovery-btn" type="button"
+          data-recovery-action="${escapeHtml(suggestion.secondaryAction === 'refresh' ? 'refresh' : 'resume')}"
+          data-recovery-kind="retry-page"
+          data-page-id="${escapeHtml(suggestion.pageId || '')}">
+          ${escapeHtml(suggestion.secondaryLabel || '从页面重新执行')}
+        </button>
+      </div>
+    `;
+  }
+
+  function renderStepsList() {
+    if (!stepsList) {
+      return;
+    }
+    const pages = Array.isArray(latestPageRecoveryState?.pages) && latestPageRecoveryState.pages.length
+      ? latestPageRecoveryState.pages
+      : [];
+    if (!pages.length) {
+      const nodes = getWorkflowNodes(latestState);
+      stepsList.innerHTML = nodes.map((node, index) => `
+        <div class="step-row pending" data-node-id="${escapeHtml(node.nodeId)}">
+          <div class="step-main">
+            <span class="step-index">${index + 1}</span>
+            <div class="step-copy">
+              <span class="step-title">${escapeHtml(node.title || node.nodeId)}</span>
+              <span class="step-subtitle mono">${escapeHtml(node.nodeId)}</span>
+            </div>
+          </div>
+          <div class="step-actions">
+            <span class="step-status" data-node-id="${escapeHtml(node.nodeId)}"></span>
+            <button class="btn btn-outline btn-xs step-btn" type="button" data-node-id="${escapeHtml(node.nodeId)}">执行</button>
+          </div>
+        </div>
+      `).join('');
+      renderStepStatuses(latestState);
+      return;
+    }
+    stepsList.innerHTML = pages.map((page, index) => `
+      <details class="step-page ${escapeHtml(page.status || 'pending')}" data-page-id="${escapeHtml(page.pageId)}">
+        <summary class="step-page-summary">
+          <div class="step-page-main">
+            <span class="step-index">${index + 1}</span>
+            <div class="step-copy">
+              <span class="step-title">${escapeHtml(page.title || page.pageId)}</span>
+              <span class="step-subtitle">${escapeHtml(page.completedCount || 0)} / ${escapeHtml(page.totalCount || 0)} · ${escapeHtml(getPageStatusLabel(page.status))}</span>
+            </div>
+          </div>
+          <span class="step-page-status">${escapeHtml(STATUS_ICONS[page.status] || '')}</span>
+        </summary>
+        <div class="step-page-nodes">
+          ${renderNodeRowsForPage(page)}
+        </div>
+      </details>
+    `).join('');
+    renderPageRecoveryCard();
     renderStepStatuses(latestState);
   }
 
@@ -372,6 +463,10 @@
     const statusEl = document.querySelector(`.step-status[data-node-id="${selector}"]`);
     if (row) {
       row.className = `step-row ${normalized}`;
+    }
+    const nodeRow = document.querySelector(`.page-node-row[data-node-id="${selector}"]`);
+    if (nodeRow) {
+      nodeRow.className = `page-node-row ${normalized}`;
     }
     setText(statusEl, STATUS_ICONS[normalized] || '');
   }
@@ -384,10 +479,31 @@
   }
 
   function updateProgressCounter() {
+    const pages = Array.isArray(latestPageRecoveryState?.pages) ? latestPageRecoveryState.pages : [];
+    if (pages.length) {
+      const completedPages = pages.filter((page) => String(page.status || '') === 'completed').length;
+      setText(elements.stepsProgress, `${completedPages} / ${pages.length}`);
+      return;
+    }
     const nodes = getWorkflowNodes(latestState);
     const statuses = getNodeStatuses(latestState);
     const completed = Object.values(statuses).filter(isDoneStatus).length;
     setText(elements.stepsProgress, `${completed} / ${nodes.length}`);
+  }
+
+  async function refreshPageRecoveryState() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_PAGE_RECOVERY_STATE', source: 'sidepanel' });
+      latestPageRecoveryState = {
+        pages: Array.isArray(response?.pages) ? response.pages : [],
+        recoverySuggestion: response?.recoverySuggestion || null,
+      };
+      renderStepsList();
+    } catch (error) {
+      latestPageRecoveryState = { pages: [], recoverySuggestion: null };
+      renderPageRecoveryCard();
+      console.warn('刷新页面恢复状态失败：', error);
+    }
   }
 
   function updateButtonStates() {
@@ -895,6 +1011,7 @@
   async function restoreState() {
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
     applySettingsState(state || {});
+    await refreshPageRecoveryState();
   }
 
   async function initializeReleaseInfo() {
@@ -1017,6 +1134,31 @@
 
   function bindRuntimeActions() {
     bindAutoRunClickHandler();
+    elements.pageRecoveryCard?.addEventListener('click', async (event) => {
+      const button = event.target?.closest?.('.page-recovery-btn');
+      if (!button) return;
+      try {
+        button.disabled = true;
+        if (button.dataset.recoveryAction === 'refresh') {
+          await refreshPageRecoveryState();
+          return;
+        }
+        const response = await sendSidepanelMessage({
+          type: 'RESUME_FROM_PAGE',
+          source: 'sidepanel',
+          payload: {
+            pageId: String(button.dataset.pageId || '').trim(),
+            suggestionKind: String(button.dataset.recoveryKind || '').trim(),
+          },
+        });
+        if (response?.error) throw new Error(response.error);
+        await refreshPageRecoveryState();
+      } catch (error) {
+        showToast(error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
     stepsList?.addEventListener('click', async (event) => {
       const button = event.target?.closest?.('.step-btn');
       if (!button) return;
@@ -1159,15 +1301,18 @@
             },
           });
           renderStepStatuses(latestState);
+          refreshPageRecoveryState().catch(() => {});
           break;
         case 'AUTO_RUN_RESET':
           syncLatestState({ nodeStatuses: {} });
           renderLogs([]);
           renderStepStatuses(latestState);
+          refreshPageRecoveryState().catch(() => {});
           applyAutoRunStatus({ autoRunning: false, autoRunPhase: 'idle' });
           break;
         case 'DATA_UPDATED':
           applySettingsState({ ...latestState, ...(message.payload || {}) });
+          refreshPageRecoveryState().catch(() => {});
           resolveManualConfirmation({ ...latestState, ...(message.payload || {}) }).catch((error) => showToast(error.message, 'error'));
           break;
         case 'AUTO_RUN_STATUS':
