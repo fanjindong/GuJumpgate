@@ -6,6 +6,7 @@ const vm = require('vm');
 const existingAccountPath = path.join(__dirname, '..', 'shared', 'existing-account.js');
 const routerPath = path.join(__dirname, '..', 'background', 'message-router.js');
 const backgroundPath = path.join(__dirname, '..', 'background.js');
+const routerSource = fs.readFileSync(routerPath, 'utf8');
 
 const sandbox = {
   console,
@@ -18,7 +19,7 @@ sandbox.self = sandbox;
 vm.runInNewContext(fs.readFileSync(existingAccountPath, 'utf8'), sandbox, {
   filename: existingAccountPath,
 });
-vm.runInNewContext(fs.readFileSync(routerPath, 'utf8'), sandbox, {
+vm.runInNewContext(routerSource, sandbox, {
   filename: routerPath,
 });
 
@@ -27,6 +28,9 @@ function buildRouter(overrides = {}) {
     persisted: [],
     state: [],
     broadcasts: [],
+    nodeStatuses: [],
+    registeredTabs: [],
+    reset: [],
   };
   const state = {
     plusModeEnabled: true,
@@ -59,6 +63,7 @@ function buildRouter(overrides = {}) {
     },
     broadcastDataUpdate: (payload) => calls.broadcasts.push(payload),
     clearStopRequest: () => {},
+    detectCurrentChatGptSessionStateForStart: async () => ({ loggedIn: false }),
     getState: async () => state,
     normalizeSignupMethod: (value = '') => String(value || '').trim().toLowerCase() === 'phone' ? 'phone' : 'email',
     preservePhoneReuseSettingsForPhoneSignup: () => {},
@@ -76,7 +81,10 @@ function buildRouter(overrides = {}) {
       return sanitized;
     },
     setPersistentSettings: async (updates) => calls.persisted.push(updates),
+    registerTab: async (...args) => calls.registeredTabs.push(args),
+    resetState: async () => calls.reset.push(true),
     setState: async (updates) => calls.state.push(updates),
+    setNodeStatus: async (...args) => calls.nodeStatuses.push(args),
     validateModeSwitch: () => ({ ok: true, errors: [], normalizedUpdates: {} }),
     ...overrides,
   };
@@ -172,6 +180,64 @@ function extractFunctionSource(source, functionName) {
   assert.strictEqual(autoRunState.existingAccount.password, 'FlaDv$GGoxocBD3y');
   assert.strictEqual(autoRunState.email, 'AnnKim5690@outlook.com');
   assert.strictEqual(autoRunCalls.loops.length, 1);
+  assert.strictEqual(autoRunCalls.loops[0][1].mode, 'restart', '账户 JSON 非空时必须从首节点重新登录，不能复用旧登录态。');
+
+  const loggedInAutoRunCalls = {
+    loops: [],
+  };
+  const loggedInAutoRun = buildRouter({
+    detectCurrentChatGptSessionStateForStart: async () => ({
+      loggedIn: true,
+      confidence: 'session',
+      accessToken: '测试-access-token',
+      tabId: 88,
+      url: 'https://chatgpt.com/',
+    }),
+    getPendingAutoRunTimerPlan: () => null,
+    normalizeRunCount: (value) => Math.max(1, Number(value) || 1),
+    startAutoRunLoop: (...args) => loggedInAutoRunCalls.loops.push(args),
+    validateAutoRunStart: () => ({ ok: true, errors: [] }),
+  });
+  await loggedInAutoRun.router.handleMessage({
+    type: 'AUTO_RUN',
+    source: 'sidepanel',
+    payload: {
+      totalRuns: 1,
+      existingAccountJson: '',
+    },
+  }, {});
+  assert.deepStrictEqual(loggedInAutoRun.calls.nodeStatuses, [
+    ['open-chatgpt', 'completed'],
+    ['existing-account-login', 'skipped'],
+    ['fetch-existing-login-code', 'skipped'],
+  ]);
+  assert.deepStrictEqual(loggedInAutoRun.calls.registeredTabs[0], ['signup-page', 88]);
+  assert.strictEqual(loggedInAutoRunCalls.loops[0][1].mode, 'continue', '账户 JSON 为空且已登录时应从 Checkout 继续，避免清理 cookies。');
+
+  const loggedOutAutoRun = buildRouter({
+    detectCurrentChatGptSessionStateForStart: async () => ({
+      loggedIn: false,
+      confidence: 'session',
+      accessToken: '',
+    }),
+    getPendingAutoRunTimerPlan: () => null,
+    validateAutoRunStart: () => ({ ok: true, errors: [] }),
+  });
+  await assert.rejects(
+    () => loggedOutAutoRun.router.handleMessage({
+      type: 'AUTO_RUN',
+      source: 'sidepanel',
+      payload: {
+        totalRuns: 1,
+        existingAccountJson: '',
+      },
+    }, {}),
+    /账户 JSON 为空，且当前窗口未检测到已登录 ChatGPT 会话/
+  );
+  assert.ok(
+    !routerSource.includes('确保认证页仍然打开并停留在验证码页'),
+    '手动创建 Plus Checkout 不应再强制依赖旧认证标签页。'
+  );
 
   const backgroundSource = fs.readFileSync(backgroundPath, 'utf8');
   assert.ok(

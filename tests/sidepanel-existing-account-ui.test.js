@@ -158,9 +158,23 @@ for (const removedPayloadNeedle of [
 }
 
 const startAutoRunSource = extractFunctionSource(js, 'startAutoRunFromCurrentSettings');
-assertIncludes(startAutoRunSource, 'ensureExistingAccountJsonReadyForStart();', '自动运行前必须校验账户 JSON。');
+assertIncludes(startAutoRunSource, 'ensureStartSettingsReady();', '自动运行前必须统一校验可选账户 JSON 与 PayPal Hosted 配置。');
 assertIncludes(startAutoRunSource, "type: 'AUTO_RUN'", '自动运行应发送 AUTO_RUN 消息。');
 assertIncludes(startAutoRunSource, 'existingAccountJson: getExistingAccountJsonInputValue()', '自动运行应携带账户 JSON。');
+
+const startSettingsValidationSource = extractFunctionSource(js, 'ensureStartSettingsReady');
+assertIncludes(startSettingsValidationSource, 'ensureExistingAccountJsonReadyForStart({ required: false });', '自动运行允许账户 JSON 为空，以便复用当前已登录会话。');
+assertIncludes(startSettingsValidationSource, 'ensurePlusHostedCheckoutReadyForStart();', '统一启动校验必须检查 PayPal Hosted 配置。');
+
+const hostedCheckoutValidationSource = extractFunctionSource(js, 'ensurePlusHostedCheckoutReadyForStart');
+assertIncludes(hostedCheckoutValidationSource, 'getSelectedPaymentMethod() !== PAYMENT_METHOD_PAYPAL', '非 PayPal 支付方式不应强制检查 Hosted 接码配置。');
+assertIncludes(hostedCheckoutValidationSource, 'inputHostedCheckoutVerificationUrl', 'PayPal Hosted 校验必须检查验证码接口。');
+assertIncludes(hostedCheckoutValidationSource, 'inputHostedCheckoutPhone', 'PayPal Hosted 校验必须检查 PayPal 电话。');
+assertIncludes(hostedCheckoutValidationSource, 'Hosted 接码池', 'PayPal Hosted 校验提示必须包含接码池兜底方案。');
+
+const manualNodeSettingsValidationSource = extractFunctionSource(js, 'ensureManualNodeSettingsReady');
+assertIncludes(manualNodeSettingsValidationSource, "plus-checkout-create", '手动节点校验应只在创建 Plus Checkout 时检查 PayPal Hosted 配置。');
+assertIncludes(manualNodeSettingsValidationSource, 'ensurePlusHostedCheckoutReadyForStart();', '手动创建 Plus Checkout 前必须执行 PayPal Hosted 配置校验。');
 
 const initAccountRecordsManagerSource = extractFunctionSource(js, 'initAccountRecordsManager');
 assertIncludes(
@@ -172,6 +186,7 @@ assertIncludes(
 const manualStepBlock = js.slice(js.indexOf("stepsList?.addEventListener('click'"));
 assertIncludes(manualStepBlock, "type: 'EXECUTE_NODE'", '手动执行节点应发送 EXECUTE_NODE 消息。');
 assertIncludes(manualStepBlock, 'existingAccountJson: getExistingAccountJsonInputValue()', '手动执行节点应携带账户 JSON。');
+assertIncludes(manualStepBlock, 'ensureManualNodeSettingsReady(nodeId);', '手动执行创建 Plus Checkout 前必须校验 PayPal Hosted 配置。');
 assertIncludes(js, "type: 'GET_PAGE_RECOVERY_STATE'", '侧栏应读取页面级恢复状态。');
 assertIncludes(js, "type: 'RESUME_FROM_PAGE'", '侧栏应通过后台执行页面恢复动作。');
 assertIncludes(js, "button.dataset.recoveryAction === 'refresh'", '重新检测按钮只应刷新建议，不能隐式执行恢复。');

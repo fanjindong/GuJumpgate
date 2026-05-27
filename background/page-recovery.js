@@ -34,7 +34,7 @@
     if (!['chatgpt.com', 'www.chatgpt.com', 'chat.openai.com'].includes(hostname)) {
       return false;
     }
-    // 登录、创建账号、加手机号等路径仍属于认证链路，不应误判为已登录主页。
+    // 这里只做候选 URL 判断；真正是否已登录必须由调用方通过 session/accessToken 确认。
     return !/^\/(?:auth\/|create-account\/|email-verification|log-in|add-phone)(?:[/?#]|$)/i.test(parsed.pathname || '');
   }
 
@@ -85,6 +85,7 @@
       setNodeStatus = async () => {},
       setState = async () => {},
       startAutoRunLoop = () => {},
+      detectChatGptSessionState = null,
     } = deps;
 
     function getWorkflowNodes(state = {}) {
@@ -183,9 +184,21 @@
       };
     }
 
-    function buildRecoverySuggestion(state = {}, currentTab = null) {
+    async function isConfirmedLoggedInChatGptTab(currentTab = null) {
       const currentUrl = String(currentTab?.url || '').trim();
-      if (currentUrl && isChatGptLoggedInUrl(currentUrl)
+      if (!currentUrl || !isChatGptLoggedInUrl(currentUrl)) {
+        return false;
+      }
+      if (typeof detectChatGptSessionState !== 'function') {
+        return false;
+      }
+      const sessionState = await detectChatGptSessionState(currentTab).catch(() => null);
+      return Boolean(sessionState?.loggedIn);
+    }
+
+    async function buildRecoverySuggestion(state = {}, currentTab = null) {
+      const currentUrl = String(currentTab?.url || '').trim();
+      if (currentUrl && await isConfirmedLoggedInChatGptTab(currentTab)
         && (isNodeUnfinished(state, 'existing-account-login') || isNodeUnfinished(state, 'fetch-existing-login-code'))) {
         return {
           kind: 'skip-auth-logged-in',
@@ -237,7 +250,7 @@
     async function getPageRecoveryState() {
       const state = await getState();
       const currentTab = await getCurrentTab();
-      const recoverySuggestion = buildRecoverySuggestion(state, currentTab);
+      const recoverySuggestion = await buildRecoverySuggestion(state, currentTab);
       return {
         pages: buildPages(state, recoverySuggestion),
         recoverySuggestion,
@@ -274,14 +287,14 @@
       const requestedPageId = String(payload?.pageId || '').trim();
       const state = await getState();
       const currentTab = await getCurrentTab();
-      const suggestion = buildRecoverySuggestion(state, currentTab);
+      const suggestion = await buildRecoverySuggestion(state, currentTab);
       const kind = requestedKind || suggestion?.kind || 'retry-page';
       if (suggestion && requestedKind && suggestion.kind !== requestedKind && requestedKind !== 'retry-page') {
         throw new Error('当前恢复建议已变化，请重新检测恢复建议。');
       }
 
       if (kind === 'skip-auth-logged-in') {
-        if (!currentTab?.url || !isChatGptLoggedInUrl(currentTab.url)) {
+        if (!await isConfirmedLoggedInChatGptTab(currentTab)) {
           throw new Error('当前标签页不再是 ChatGPT 登录态页面，请重新检测恢复建议。');
         }
         await markNodes({

@@ -12044,9 +12044,112 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   chrome,
 });
 
+const CHATGPT_SESSION_DETECT_SOURCE = 'plus-checkout';
+const CHATGPT_SESSION_DETECT_INJECT_FILES = ['content/utils.js', 'content/operation-delay.js', 'content/plus-checkout.js'];
+
+function isChatGptSessionCandidateUrl(rawUrl = '') {
+  try {
+    const parsed = new URL(String(rawUrl || '').trim());
+    const hostname = String(parsed.hostname || '').toLowerCase();
+    if (!['chatgpt.com', 'www.chatgpt.com', 'chat.openai.com'].includes(hostname)) {
+      return false;
+    }
+    // URL 只能说明页面可能承载 ChatGPT 会话；登录态必须继续读取 /api/auth/session。
+    return !/^\/(?:auth\/|create-account|email-verification|log-in|login|signin|add-phone)(?:[/?#]|$)/i.test(parsed.pathname || '');
+  } catch {
+    return false;
+  }
+}
+
+async function ensureChatGptSessionDetectorOnTab(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (injectedSource) => {
+      window.__MULTIPAGE_SOURCE = injectedSource;
+    },
+    args: [CHATGPT_SESSION_DETECT_SOURCE],
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: CHATGPT_SESSION_DETECT_INJECT_FILES,
+  });
+}
+
+async function detectChatGptSessionState(tab = {}) {
+  const tabId = Number(tab?.id);
+  const url = String(tab?.url || '').trim();
+  if (!Number.isInteger(tabId) || !isChatGptSessionCandidateUrl(url)) {
+    return {
+      loggedIn: false,
+      confidence: 'url',
+      accessToken: '',
+      reason: 'not_chatgpt_session_candidate',
+    };
+  }
+
+  try {
+    await ensureChatGptSessionDetectorOnTab(tabId);
+    const result = await sendTabMessageWithTimeout(tabId, CHATGPT_SESSION_DETECT_SOURCE, {
+      type: 'PLUS_CHECKOUT_GET_STATE',
+      source: 'background',
+      payload: {
+        includeSession: true,
+        includeAccessToken: true,
+      },
+    }, 8000);
+    const accessToken = String(result?.accessToken || result?.session?.accessToken || '').trim();
+    return {
+      loggedIn: Boolean(accessToken),
+      confidence: 'session',
+      accessToken,
+      reason: accessToken ? 'access_token_present' : 'missing_access_token',
+      email: String(result?.session?.user?.email || '').trim(),
+    };
+  } catch (error) {
+    return {
+      loggedIn: false,
+      confidence: 'session',
+      accessToken: '',
+      reason: `session_check_failed:${getErrorMessage(error)}`,
+    };
+  }
+}
+
+async function detectCurrentChatGptSessionStateForStart() {
+  const currentWindowTabs = await chrome.tabs.query({ currentWindow: true }).catch(() => []);
+  const orderedTabs = Array.isArray(currentWindowTabs)
+    ? [
+      ...currentWindowTabs.filter((tab) => tab?.active),
+      ...currentWindowTabs.filter((tab) => !tab?.active),
+    ]
+    : [];
+
+  for (const tab of orderedTabs) {
+    if (!isChatGptSessionCandidateUrl(tab?.url || '')) {
+      continue;
+    }
+    const sessionState = await detectChatGptSessionState(tab);
+    if (sessionState.loggedIn) {
+      return {
+        ...sessionState,
+        tabId: Number(tab.id),
+        url: String(tab.url || '').trim(),
+      };
+    }
+  }
+
+  return {
+    loggedIn: false,
+    confidence: 'session',
+    accessToken: '',
+    reason: 'no_logged_in_chatgpt_tab_in_current_window',
+  };
+}
+
 const pageRecoveryManager = self.MultiPageBackgroundPageRecovery?.createPageRecoveryManager({
   addLog,
   chrome,
+  detectChatGptSessionState,
   getNodeDefinitionsForState,
   getState,
   registerTab,
@@ -13019,6 +13122,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   deleteHotmailAccounts,
   deleteIcloudAlias,
   deleteUsedIcloudAliases,
+  detectCurrentChatGptSessionStateForStart,
   findPayPalAccount,
   disableUsedLuckmailPurchases,
   doesNodeUseCompletionSignal,

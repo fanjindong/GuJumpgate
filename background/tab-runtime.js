@@ -718,8 +718,9 @@
 
     async function reuseOrCreateTab(source, url, options = {}) {
       if (options.forceNew) {
-        await closeConflictingTabsForSource(source, url);
         const tab = await createAutomationTab({ url, active: true }, options);
+        // 先创建新标签再清理旧标签，避免旧标签是窗口最后一个标签时触发 Chrome 关闭整个窗口。
+        await closeConflictingTabsForSource(source, url, { excludeTabIds: [tab.id] });
 
         if (options.inject) {
           await waitForTabUpdateComplete(tab.id);
@@ -826,8 +827,9 @@
         return tabId;
       }
 
-      await closeConflictingTabsForSource(source, url);
       const tab = await createAutomationTab({ url, active: true }, options);
+      // 先创建新标签再清理旧标签，避免清理当前窗口最后一个旧标签导致窗口被关闭。
+      await closeConflictingTabsForSource(source, url, { excludeTabIds: [tab.id] });
 
       if (options.inject) {
         await waitForTabUpdateComplete(tab.id);

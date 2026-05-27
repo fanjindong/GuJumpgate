@@ -45,6 +45,7 @@ function createManagerHarness(options = {}) {
         query: async () => (activeTab ? [activeTab] : []),
       },
     },
+    detectChatGptSessionState: options.detectChatGptSessionState || (async () => ({ loggedIn: false })),
     getNodeDefinitionsForState: (currentState) => definitions.getNodes({
       plusModeEnabled: true,
       plusPaymentMethod: currentState.plusPaymentMethod || 'paypal',
@@ -74,6 +75,11 @@ function createManagerHarness(options = {}) {
 async function runLoggedInSuggestionTest() {
   const { manager } = createManagerHarness({
     activeTab: { id: 101, url: 'https://chatgpt.com/' },
+    detectChatGptSessionState: async () => ({
+      loggedIn: true,
+      confidence: 'session',
+      accessToken: '测试-access-token',
+    }),
     state: {
       nodeStatuses: {
         'open-chatgpt': 'completed',
@@ -85,6 +91,26 @@ async function runLoggedInSuggestionTest() {
   const result = await manager.getPageRecoveryState();
   assert.strictEqual(result.recoverySuggestion.kind, 'skip-auth-logged-in');
   assert.strictEqual(result.pages.find((page) => page.pageId === 'auth').status, 'needs_action');
+}
+
+async function runLoggedOutHomeDoesNotSkipAuthTest() {
+  const { manager } = createManagerHarness({
+    activeTab: { id: 102, url: 'https://chatgpt.com/' },
+    detectChatGptSessionState: async () => ({
+      loggedIn: false,
+      confidence: 'session',
+      accessToken: '',
+    }),
+    state: {
+      nodeStatuses: {
+        'open-chatgpt': 'completed',
+        'existing-account-login': 'pending',
+        'fetch-existing-login-code': 'pending',
+      },
+    },
+  });
+  const result = await manager.getPageRecoveryState();
+  assert.strictEqual(result.recoverySuggestion, null, '未登录的 chatgpt.com 首页不应提示跳过认证。');
 }
 
 async function runCheckoutAdoptTest() {
@@ -175,6 +201,7 @@ async function runFailedPageRefreshActionTest() {
 
 async function runTests() {
   await runLoggedInSuggestionTest();
+  await runLoggedOutHomeDoesNotSkipAuthTest();
   await runCheckoutAdoptTest();
   await runPayPalAdoptTest();
   await runPayPalPayUrlAdoptTest();

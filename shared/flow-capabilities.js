@@ -56,6 +56,34 @@
     return PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH;
   }
 
+  function normalizePlusPaymentMethod(value = '') {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'gpc-helper') {
+      return 'gpc-helper';
+    }
+    return normalized === 'gopay' ? 'gopay' : 'paypal';
+  }
+
+  function hasHostedSmsPoolCandidate(text = '') {
+    const lines = String(text || '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .map((line) => String(line || '').trim())
+      .filter(Boolean);
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const separatorIndex = line.indexOf('----');
+      const phone = separatorIndex > 0 ? line.slice(0, separatorIndex).trim() : line;
+      const verificationUrl = separatorIndex > 0 ? line.slice(separatorIndex + 4).trim() : lines[index + 1];
+      // 后台兜底校验必须和侧栏一致，避免定时启动绕过必填项后在 PayPal 阶段才失败。
+      if (phone && verificationUrl) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function createFlowCapabilityRegistry(deps = {}) {
     const defaultFlowId = deps.defaultFlowId || DEFAULT_FLOW_ID;
 
@@ -118,6 +146,22 @@
     }
 
     function validateAutoRunStart(options = {}) {
+      const state = options?.state || {};
+      const paymentMethod = normalizePlusPaymentMethod(state?.plusPaymentMethod);
+      const verificationUrl = String(state?.hostedCheckoutVerificationUrl || '').trim();
+      const phoneNumber = String(state?.hostedCheckoutPhoneNumber || '').trim();
+      const hasSmsPool = hasHostedSmsPoolCandidate(state?.hostedCheckoutSmsPoolText);
+      if (paymentMethod === 'paypal' && !((verificationUrl && phoneNumber) || hasSmsPool)) {
+        return {
+          ok: false,
+          errors: [{
+            code: 'missing_paypal_hosted_checkout_contact',
+            message: 'PayPal Hosted Checkout 启动前请填写“验证码接口 + PayPal 电话(不带+1)”，或导入“Hosted 接码池”。',
+          }],
+          capabilityState: resolveSidepanelCapabilities(options),
+        };
+      }
+
       return {
         ok: true,
         errors: [],

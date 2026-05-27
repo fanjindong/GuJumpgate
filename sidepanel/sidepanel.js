@@ -237,9 +237,13 @@
     return String(elements.inputExistingAccountJson?.value || '').trim();
   }
 
-  function ensureExistingAccountJsonReadyForStart() {
+  function ensureExistingAccountJsonReadyForStart(options = {}) {
+    const required = options.required !== false;
     const rawJson = getExistingAccountJsonInputValue();
     if (!rawJson) {
+      if (!required) {
+        return false;
+      }
       elements.inputExistingAccountJson?.focus?.();
       throw new Error('请先填写账户 JSON。');
     }
@@ -254,6 +258,65 @@
     } catch (error) {
       elements.inputExistingAccountJson?.focus?.();
       throw new Error(`账户 JSON 格式不正确：${error.message}`);
+    }
+    return true;
+  }
+
+  function normalizeHostedSmsPoolLine(value = '') {
+    return String(value || '').trim();
+  }
+
+  function hasHostedSmsPoolCandidate(text = '') {
+    const lines = String(text || '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .map(normalizeHostedSmsPoolLine)
+      .filter(Boolean);
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      const separatorIndex = line.indexOf('----');
+      const phone = separatorIndex > 0 ? line.slice(0, separatorIndex).trim() : line;
+      const verificationUrl = separatorIndex > 0 ? line.slice(separatorIndex + 4).trim() : lines[index + 1];
+      // 接码池必须同时提供号码和验证码接口，否则启动后仍会在 PayPal Hosted 阶段失败。
+      if (phone && verificationUrl) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function ensurePlusHostedCheckoutReadyForStart() {
+    if (getSelectedPaymentMethod() !== PAYMENT_METHOD_PAYPAL) {
+      return;
+    }
+
+    const verificationUrl = normalizeUrl(elements.inputHostedCheckoutVerificationUrl?.value);
+    const phoneNumber = String(elements.inputHostedCheckoutPhone?.value || '').trim();
+    const hasSmsPool = hasHostedSmsPoolCandidate(elements.inputHostedCheckoutSmsPool?.value);
+    if ((verificationUrl && phoneNumber) || hasSmsPool) {
+      return;
+    }
+
+    const focusTarget = verificationUrl
+      ? elements.inputHostedCheckoutPhone
+      : elements.inputHostedCheckoutVerificationUrl;
+    focusTarget?.focus?.();
+    throw new Error('PayPal Hosted Checkout 启动前请填写“验证码接口 + PayPal 电话(不带+1)”，或导入“Hosted 接码池”。');
+  }
+
+  function ensureStartSettingsReady() {
+    ensureExistingAccountJsonReadyForStart({ required: false });
+    ensurePlusHostedCheckoutReadyForStart();
+  }
+
+  function ensureManualNodeSettingsReady(nodeId = '') {
+    const normalizedNodeId = String(nodeId || '').trim();
+    ensureExistingAccountJsonReadyForStart({
+      required: normalizedNodeId !== 'plus-checkout-create',
+    });
+    if (normalizedNodeId === 'plus-checkout-create') {
+      ensurePlusHostedCheckoutReadyForStart();
     }
   }
 
@@ -837,7 +900,7 @@
     const trace = createAutoRunStartTrace();
     trace('账户 JSON 校验：开始', { hasExistingAccountJson: Boolean(getExistingAccountJsonInputValue()) });
     setAutoRunStageButton('检查配置...');
-    ensureExistingAccountJsonReadyForStart();
+    ensureStartSettingsReady();
     trace('配置保存：开始');
     setAutoRunStageButton('保存配置...');
     await waitForSettingsSaveIdle();
@@ -1165,7 +1228,7 @@
       const nodeId = String(button.dataset.nodeId || '').trim();
       if (!nodeId) return;
       try {
-        ensureExistingAccountJsonReadyForStart();
+        ensureManualNodeSettingsReady(nodeId);
         await waitForSettingsSaveIdle();
         await saveSettings({ silent: true, force: true });
         button.disabled = true;

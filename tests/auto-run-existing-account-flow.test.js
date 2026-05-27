@@ -142,10 +142,36 @@ const startValidation = registry.validateAutoRunStart({
   state: {
     plusModeEnabled: true,
     signupMethod: 'email',
+    plusPaymentMethod: 'paypal',
+    hostedCheckoutVerificationUrl: 'https://mail.test.com/api/text-relay/eca_tr_xxxxxxxxx',
+    hostedCheckoutPhoneNumber: '1234567890',
   },
 });
 assert.strictEqual(startValidation.ok, true);
 assert.strictEqual(startValidation.capabilityState.stepDefinitionOptions.plusModeEnabled, true);
 assert.strictEqual(startValidation.capabilityState.stepDefinitionOptions.signupMethod, 'email');
+
+const missingHostedConfigValidation = registry.validateAutoRunStart({
+  state: {
+    plusModeEnabled: true,
+    signupMethod: 'email',
+    plusPaymentMethod: 'paypal',
+  },
+});
+assert.strictEqual(missingHostedConfigValidation.ok, false);
+assert.match(
+  missingHostedConfigValidation.errors[0].message,
+  /验证码接口 \+ PayPal 电话\(不带\+1\).*Hosted 接码池/
+);
+
+const poolHostedConfigValidation = registry.validateAutoRunStart({
+  state: {
+    plusModeEnabled: true,
+    signupMethod: 'email',
+    plusPaymentMethod: 'paypal',
+    hostedCheckoutSmsPoolText: '1234567890\nhttps://mail.test.com/api/text-relay/eca_tr_xxxxxxxxx',
+  },
+});
+assert.strictEqual(poolHostedConfigValidation.ok, true);
 
 console.log('自动运行已有账户 Plus 流程测试通过');

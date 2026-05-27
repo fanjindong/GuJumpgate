@@ -1198,6 +1198,11 @@ function FindProxyForURL(url, host) {
           injectSource: PLUS_CHECKOUT_SOURCE,
           logMessage: '步骤 4：正在复用登录后的 ChatGPT 标签页，等待 Checkout 脚本就绪...',
         });
+        const accessToken = await readAccessTokenFromChatGptSessionTab(signupTabId);
+        if (!accessToken) {
+          await addLog('步骤 4：复用登录标签页失败：当前 ChatGPT 页面未读取到 accessToken，改为新开 ChatGPT 页面。', 'warn');
+          return { tabId: 0, reused: false };
+        }
         if (typeof registerTab === 'function') {
           await registerTab(PLUS_CHECKOUT_SOURCE, signupTabId);
         }

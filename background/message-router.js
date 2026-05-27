@@ -27,6 +27,7 @@
       deleteHotmailAccounts,
       deleteIcloudAlias,
       deleteUsedIcloudAliases,
+      detectCurrentChatGptSessionStateForStart = null,
       disableUsedLuckmailPurchases,
       doesNodeUseCompletionSignal,
       ensureMail2925MailboxSession,
@@ -118,7 +119,6 @@
           state: validationState,
         });
       },
-      getTabId,
       getStopRequested,
       handleAutoRunLoopUnhandledError,
       importSettingsBundle,
@@ -129,7 +129,6 @@
       isLocalhostOAuthCallbackUrl,
       isLuckmailProvider,
       isStopError,
-      isTabAlive,
       launchAutoRunTimerPlan,
       ensureIpProxyAutoSyncAlarm,
       clearIpProxyAutoSyncAlarm,
@@ -245,6 +244,36 @@
       return await getState();
     }
 
+    function hasExplicitExistingAccountJson(payload = {}) {
+      return String(payload?.existingAccountJson || '').trim().length > 0;
+    }
+
+    async function prepareLoggedInSessionAutoRunStart() {
+      if (typeof detectCurrentChatGptSessionStateForStart !== 'function') {
+        throw new Error('账户 JSON 为空，且当前版本未接入当前 ChatGPT 登录态检测。请填写账户 JSON 后再启动。');
+      }
+
+      const sessionState = await detectCurrentChatGptSessionStateForStart();
+      if (!sessionState?.loggedIn) {
+        throw new Error('账户 JSON 为空，且当前窗口未检测到已登录 ChatGPT 会话。请先在 ChatGPT 页面手动登录，或填写账户 JSON 后再启动。');
+      }
+
+      // 空账户 JSON 表示用户明确选择复用当前登录态。先重置流程节点，避免上一轮 Checkout/PayPal 状态被继续沿用。
+      if (typeof resetState === 'function') {
+        await resetState();
+      }
+
+      if (Number.isInteger(Number(sessionState.tabId)) && typeof registerTab === 'function') {
+        await registerTab('signup-page', Number(sessionState.tabId)).catch(() => {});
+      }
+
+      await setNodeStatus('open-chatgpt', 'completed');
+      await setNodeStatus('existing-account-login', 'skipped');
+      await setNodeStatus('fetch-existing-login-code', 'skipped');
+      await addLog('检测到账户 JSON 为空，已确认当前 ChatGPT 登录态，将跳过登录并直接创建 Plus Checkout。', 'info');
+      return await getState();
+    }
+
     async function appendManualAccountRunRecordIfNeeded(status, stateOverride = null, reason = '') {
       if (typeof appendAccountRunRecord !== 'function') {
         return null;
@@ -262,17 +291,8 @@
       if (step !== 4) {
         return;
       }
-
-      const signupTabId = typeof getTabId === 'function'
-        ? await getTabId('signup-page')
-        : null;
-      const signupTabAlive = signupTabId && typeof isTabAlive === 'function'
-        ? await isTabAlive('signup-page')
-        : Boolean(signupTabId);
-
-      if (!signupTabId || !signupTabAlive) {
-        throw new Error('手动执行步骤 4 前，请先执行步骤 1 或步骤 2，确保认证页仍然打开并停留在验证码页。');
-      }
+      // 创建 Checkout 自身已经支持复用登录页或新开 ChatGPT 页；这里不再强制依赖旧认证标签页，
+      // 否则用户已登录但认证页关闭时会被错误拦截。
     }
 
     const DEFAULT_OPENAI_NODE_BY_STEP = Object.freeze({
@@ -1224,7 +1244,17 @@
           if (message.source === 'sidepanel') {
             await lockAutomationWindowFromMessage(message, sender);
           }
-          const state = await syncExistingAccountSettingsForStart(message.payload || {});
+          const payload = message.payload || {};
+          const hasAccountJson = hasExplicitExistingAccountJson(payload);
+          let state = null;
+          if (hasAccountJson) {
+            state = await syncExistingAccountSettingsForStart(payload);
+          } else {
+            if (Object.prototype.hasOwnProperty.call(payload || {}, 'existingAccountJson')) {
+              await syncExistingAccountSettingsForStart(payload);
+            }
+            state = await prepareLoggedInSessionAutoRunStart();
+          }
           const autoRunStartValidation = validateAutoRunStart(state, { state });
           if (autoRunStartValidation?.ok === false) {
             throw new Error(autoRunStartValidation.errors?.[0]?.message || '当前设置不支持启动自动流程。');
@@ -1232,9 +1262,11 @@
           if (getPendingAutoRunTimerPlan(state)) {
             throw new Error('已有自动运行倒计时计划，请先取消或立即开始。');
           }
-          const totalRuns = normalizeRunCount(message.payload?.totalRuns || 1);
-          const autoRunSkipFailures = Boolean(message.payload?.autoRunSkipFailures);
-          const mode = message.payload?.mode === 'continue' ? 'continue' : 'restart';
+          const totalRuns = normalizeRunCount(payload?.totalRuns || 1);
+          const autoRunSkipFailures = Boolean(payload?.autoRunSkipFailures);
+          const mode = hasAccountJson
+            ? (payload?.mode === 'continue' ? 'continue' : 'restart')
+            : 'continue';
           await setState({ autoRunSkipFailures });
           startAutoRunLoop(totalRuns, { autoRunSkipFailures, mode });
           return { ok: true };
@@ -1244,6 +1276,9 @@
           clearStopRequest();
           if (message.source === 'sidepanel') {
             await lockAutomationWindowFromMessage(message, sender);
+          }
+          if (!hasExplicitExistingAccountJson(message.payload || {})) {
+            throw new Error('定时自动运行需要账户 JSON。复用当前已登录 ChatGPT 会话只支持立即启动，避免倒计时期间登录态变化。');
           }
           const state = await syncExistingAccountSettingsForStart(message.payload || {});
           const autoRunStartValidation = validateAutoRunStart(state, { state });
